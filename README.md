@@ -1,54 +1,58 @@
-# muna-image-google
+运用 Gemini API 生成图像的 Go 命令行工具。
 
-A Go CLI that generates images with the Gemini API (Nano Banana models).
-
-## Requirements
+## 环境要求
 
 - Go 1.22+
-- A Gemini API key in your environment (e.g. `MUNA_GEMINI_API_KEY`)
+- 环境变量 `MUNA_GEMINI_API_KEY`
 
-## Install deps
+## 安装依赖
 
 ```bash
 go mod tidy
 ```
 
-## Usage
+## 使用方式
 
 ```bash
-# Generate with default prompt
+```bash
+# 使用默认提示词生成
 MUNA_GEMINI_API_KEY=... go run .
 
-# Custom prompt
-MUNA_GEMINI_API_KEY=... go run . "A tiny robot painting a sunset" --out outputs
+# 自定义提示词
+MUNA_GEMINI_API_KEY=... go run . "一个小机器人在画夕阳" --out outputs
 
-# Provide prompt via stdin
-echo "A futuristic city skyline at dawn" | MUNA_GEMINI_API_KEY=... go run . --out outputs
+# 通过 stdin 提供提示词
+echo "清晨的未来城市天际线" | MUNA_GEMINI_API_KEY=... go run . --out outputs
 
-# Select model
-MUNA_GEMINI_API_KEY=... go run . --model gemini-3-pro-image-preview "A minimal logo for a tea shop" --out outputs
+# 指定模型
+MUNA_GEMINI_API_KEY=... go run . --model gemini-3-pro-image-preview "极简风茶馆 logo" --out outputs
 
-# Set aspect ratio and size (for gemini-3-pro-image-preview)
-MUNA_GEMINI_API_KEY=... go run . "A modern cafe interior" --aspect 16:9 --size 2K --out outputs
+# 设置宽高比与尺寸（适用于 gemini-3-pro-image-preview）
+MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
 
-# Increase total timeout
-MUNA_GEMINI_API_KEY=... go run . "A modern cafe interior" --timeout 5m --out outputs
+# 增加超时
+MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" --timeout 5m --out outputs
 
-# Verbose HTTP logging (redacts API key)
-MUNA_GEMINI_API_KEY=... go run . "A modern cafe interior" -v --out outputs
+# 详细 HTTP 日志（API Key 自动脱敏）
+MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" -v --out outputs
+
+# 使用参考图片（可重复，最多 14 张）
+MUNA_GEMINI_API_KEY=... go run . "办公室合影，搞怪表情" -r person1.png -r person2.png -r person3.png --out outputs
+```
 ```
 
-## Flags
+## 参数说明
 
 ```text
---model   Gemini image model ID (default: gemini-3-pro-image-preview)
---out     Output directory (default: .)
---aspect  Aspect ratio (e.g. 1:1, 16:9)
---size    Image size (1K, 2K, 4K for gemini-3-pro-image-preview) (default: 4K)
---timeout Total request timeout (e.g. 30s, 5m) (default: 5m)
---verbose Verbose HTTP logging (redacts API key, truncates large fields)
+--model   模型 ID（默认：gemini-3-pro-image-preview）
+--out     输出目录（默认：.）
+--aspect  宽高比（如 1:1、16:9）
+--size    图像尺寸（1K、2K、4K，默认：4K）
+--timeout 总超时（如 30s、5m，默认：5m）
+--verbose 详细日志（API Key 脱敏、长字段裁剪）
+--ref     参考图片路径（可重复，最多 14 张）
 ```
 
-## Notes
+## 备注
 
-- The default model is `gemini-3-pro-image-preview`.
+- 默认模型为 `gemini-3-pro-image-preview`。

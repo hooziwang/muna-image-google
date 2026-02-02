@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,15 +29,23 @@ var (
 	sizeFlag   string
 	timeoutFlag time.Duration
 	verboseFlag bool
+	refPaths []string
 )
+
+const maxCaptureBytes = 2 << 20
+
+var lastResponseBody []byte
+
+var errNoImage = errors.New("no image data returned")
 
 var rootCmd = &cobra.Command{
 	Use:   "muna-image-google [prompt]",
-	Short: "Generate images with the Gemini API",
-	Long: "Generate images with the Gemini API.\n" +
-		"Provide the prompt as a positional argument, or via stdin.",
+	Short: "使用 Gemini API 生成图像",
+	Long: "使用 Gemini API 生成图像。\n" +
+		"提示词可用位置参数提供，也可从标准输入读取。",
 	Args: cobra.RangeArgs(0, 1),
 	Run: func(_ *cobra.Command, args []string) {
+		log.SetFlags(0)
 		var text string
 		if len(args) > 0 {
 			text = strings.TrimSpace(args[0])
@@ -57,35 +66,45 @@ var rootCmd = &cobra.Command{
 
 		ctx := context.Background()
 		httpClient := &http.Client{Timeout: timeoutFlag}
-		if verboseFlag {
-			log.SetFlags(0)
-			httpClient.Transport = &loggingTransport{
-				base:   http.DefaultTransport,
-				apiKey: apiKey,
-			}
+		httpClient.Transport = &captureTransport{
+			base:    http.DefaultTransport,
+			apiKey:  apiKey,
+			verbose: verboseFlag,
 		}
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{HTTPClient: httpClient})
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		var cfg *genai.GenerateContentConfig
+		cfg := &genai.GenerateContentConfig{
+			SafetySettings: defaultSafetySettings(),
+		}
 		if aspectFlag != "" || sizeFlag != "" {
-			cfg = &genai.GenerateContentConfig{
-				ImageConfig: &genai.ImageConfig{
-					AspectRatio: aspectFlag,
-					ImageSize:   sizeFlag,
-				},
+			cfg.ImageConfig = &genai.ImageConfig{
+				AspectRatio: aspectFlag,
+				ImageSize:   sizeFlag,
 			}
 		}
 
-		resp, err := client.Models.GenerateContent(ctx, modelFlag, genai.Text(text), cfg)
+		parts, err := buildParts(text, refPaths)
+		if err != nil {
+			log.Fatal(err)
+		}
+		contents := []*genai.Content{{Parts: parts}}
+
+		resp, err := client.Models.GenerateContent(ctx, modelFlag, contents, cfg)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		imageBytes, mimeType, err := extractFirstImage(resp)
 		if err != nil {
+			if errors.Is(err, errNoImage) {
+				if !verboseFlag {
+					printNoImageReason(resp)
+				}
+				os.Exit(1)
+			}
 			log.Fatal(err)
 		}
 
@@ -112,12 +131,13 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Flags().StringVar(&modelFlag, "model", "gemini-3-pro-image-preview", "Gemini image model ID")
-	rootCmd.Flags().StringVar(&outFlag, "out", ".", "Output directory")
-	rootCmd.Flags().StringVarP(&aspectFlag, "aspect", "a", "", "Aspect ratio (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9)")
-	rootCmd.Flags().StringVar(&sizeFlag, "size", "4K", "Image size (1K, 2K, 4K for gemini-3-pro-image-preview)")
-	rootCmd.Flags().DurationVar(&timeoutFlag, "timeout", 5*time.Minute, "Total request timeout (e.g. 30s, 5m)")
-	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "Verbose HTTP logging (redacts API key, truncates large fields)")
+	rootCmd.Flags().StringVarP(&modelFlag, "model", "m", "gemini-3-pro-image-preview", "模型 ID")
+	rootCmd.Flags().StringVarP(&outFlag, "out", "o", ".", "输出目录")
+	rootCmd.Flags().StringVarP(&aspectFlag, "aspect", "a", "", "宽高比（1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9）")
+	rootCmd.Flags().StringVar(&sizeFlag, "size", "4K", "图像尺寸（1K, 2K, 4K，适用于 gemini-3-pro-image-preview）")
+	rootCmd.Flags().DurationVar(&timeoutFlag, "timeout", 5*time.Minute, "总超时（例如 30s, 5m）")
+	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "详细日志（脱敏 API Key，长字段裁剪）")
+	rootCmd.Flags().StringArrayVarP(&refPaths, "ref", "r", nil, "参考图片路径（可重复，最多 14 张）")
 }
 
 func readStdin() (string, error) {
@@ -156,7 +176,43 @@ func extractFirstImage(resp *genai.GenerateContentResponse) ([]byte, string, err
 		}
 	}
 
-	return nil, firstText, errors.New("no image data returned")
+	return nil, firstText, errNoImage
+}
+
+func printNoImageReason(resp *genai.GenerateContentResponse) {
+	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0] == nil {
+		_ = printNoImageReasonFromRaw()
+		return
+	}
+	candidate := resp.Candidates[0]
+	if candidate.FinishMessage != "" {
+		fmt.Fprintln(os.Stderr, candidate.FinishMessage)
+	} else {
+		_ = printNoImageReasonFromRaw()
+	}
+}
+
+func printNoImageReasonFromRaw() bool {
+	if len(lastResponseBody) == 0 {
+		return false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(lastResponseBody, &payload); err != nil {
+		return false
+	}
+	candidates, ok := payload["candidates"].([]interface{})
+	if !ok || len(candidates) == 0 {
+		return false
+	}
+	first, ok := candidates[0].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	if msg, ok := first["finishMessage"].(string); ok && msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return true
+	}
+	return false
 }
 
 func buildOutputPath(outputDir, mimeType string) (string, error) {
@@ -214,6 +270,53 @@ func disableLocalGeminiBaseURL() {
 	}
 }
 
+func defaultSafetySettings() []*genai.SafetySetting {
+	return []*genai.SafetySetting{
+		{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "OFF"},
+		{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "OFF"},
+		{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "OFF"},
+		{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "OFF"},
+		{Category: "HARM_CATEGORY_CIVIC_INTEGRITY", Threshold: "OFF"},
+	}
+}
+
+func buildParts(text string, images []string) ([]*genai.Part, error) {
+	parts := []*genai.Part{{Text: text}}
+	if len(images) == 0 {
+		return parts, nil
+	}
+	if len(images) > 14 {
+		return nil, fmt.Errorf("too many reference images: %d (max 14)", len(images))
+	}
+	for _, path := range images {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		mimeType := detectMIME(path, data)
+		parts = append(parts, &genai.Part{
+			InlineData: &genai.Blob{
+				Data:     data,
+				MIMEType: mimeType,
+			},
+		})
+	}
+	return parts, nil
+}
+
+func detectMIME(path string, data []byte) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != "" {
+		if m := mime.TypeByExtension(ext); m != "" {
+			return m
+		}
+	}
+	if len(data) >= 512 {
+		return http.DetectContentType(data[:512])
+	}
+	return http.DetectContentType(data)
+}
+
 type loggingTransport struct {
 	base   http.RoundTripper
 	apiKey string
@@ -240,6 +343,42 @@ func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		return nil, err
 	}
 	logHTTP("RESPONSE", fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)), req.URL.String(), resp.Header, responseBody, t.apiKey)
+
+	return resp, nil
+}
+
+type captureTransport struct {
+	base    http.RoundTripper
+	apiKey  string
+	verbose bool
+}
+
+func (t *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.base == nil {
+		t.base = http.DefaultTransport
+	}
+
+	if t.verbose {
+		requestBody, err := readAndRestoreBody(req)
+		if err != nil {
+			return nil, err
+		}
+		logHTTP("REQUEST", req.Method, req.URL.String(), req.Header, requestBody, t.apiKey)
+	}
+
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+
+	responseBody, err := readAndRestoreBody(resp)
+	if err != nil {
+		return nil, err
+	}
+	captureResponseBody(responseBody)
+	if t.verbose {
+		logHTTP("RESPONSE", fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)), req.URL.String(), resp.Header, responseBody, t.apiKey)
+	}
 
 	return resp, nil
 }
@@ -339,4 +478,15 @@ func truncateBytes(s, apiKey string) string {
 	head := b[:500]
 	tail := b[len(b)-500:]
 	return fmt.Sprintf("%s...(%d bytes)...%s", string(head), len(b), string(tail))
+}
+
+func captureResponseBody(body []byte) {
+	if len(body) == 0 {
+		return
+	}
+	if len(body) > maxCaptureBytes {
+		lastResponseBody = append([]byte(nil), body[:maxCaptureBytes]...)
+		return
+	}
+	lastResponseBody = append([]byte(nil), body...)
 }
