@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -30,11 +31,10 @@ var (
 	timeoutFlag time.Duration
 	verboseFlag bool
 	refPaths []string
+	countFlag int
 )
 
 const maxCaptureBytes = 2 << 20
-
-var lastResponseBody []byte
 
 var errNoImage = errors.New("no image data returned")
 
@@ -64,18 +64,6 @@ var rootCmd = &cobra.Command{
 		apiKey := requireMunaGeminiAPIKey()
 		disableLocalGeminiBaseURL()
 
-		ctx := context.Background()
-		httpClient := &http.Client{Timeout: timeoutFlag}
-		httpClient.Transport = &captureTransport{
-			base:    http.DefaultTransport,
-			apiKey:  apiKey,
-			verbose: verboseFlag,
-		}
-		client, err := genai.NewClient(ctx, &genai.ClientConfig{HTTPClient: httpClient})
-		if err != nil {
-			log.Fatal(err)
-		}
-
 		cfg := &genai.GenerateContentConfig{
 			SafetySettings: defaultSafetySettings(),
 		}
@@ -86,41 +74,44 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		parts, err := buildParts(text, refPaths)
-		if err != nil {
-			log.Fatal(err)
-		}
-		contents := []*genai.Content{{Parts: parts}}
-
-		resp, err := client.Models.GenerateContent(ctx, modelFlag, contents, cfg)
-		if err != nil {
-			log.Fatal(err)
+		if countFlag < 1 {
+			log.Fatal("count must be >= 1")
 		}
 
-		imageBytes, mimeType, err := extractFirstImage(resp)
-		if err != nil {
-			if errors.Is(err, errNoImage) {
-				if !verboseFlag {
-					printNoImageReason(resp)
+		ctx := context.Background()
+		var wg sync.WaitGroup
+		var outputMu sync.Mutex
+		errCh := make(chan error, countFlag)
+
+		for i := 0; i < countFlag; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				absPath, finishMessage, err := generateOnce(ctx, apiKey, text, refPaths, cfg)
+				if err != nil {
+					if errors.Is(err, errNoImage) {
+						if !verboseFlag && finishMessage != "" {
+							outputMu.Lock()
+							fmt.Fprintln(os.Stderr, finishMessage)
+							outputMu.Unlock()
+						}
+						errCh <- err
+						return
+					}
+					errCh <- err
+					return
 				}
-				os.Exit(1)
-			}
-			log.Fatal(err)
+				outputMu.Lock()
+				fmt.Println(absPath)
+				outputMu.Unlock()
+			}()
 		}
 
-		outputPath, err := buildOutputPath(outFlag, mimeType)
-		if err != nil {
-			log.Fatal(err)
+		wg.Wait()
+		close(errCh)
+		if len(errCh) > 0 {
+			os.Exit(1)
 		}
-
-		if err := os.WriteFile(outputPath, imageBytes, 0644); err != nil {
-			log.Fatal(err)
-		}
-		absPath, err := filepath.Abs(outputPath)
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println(absPath)
 	},
 }
 
@@ -138,6 +129,7 @@ func init() {
 	rootCmd.Flags().DurationVar(&timeoutFlag, "timeout", 5*time.Minute, "总超时（例如 30s, 5m）")
 	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "详细日志（脱敏 API Key，长字段裁剪）")
 	rootCmd.Flags().StringArrayVarP(&refPaths, "ref", "r", nil, "参考图片路径（可重复，最多 14 张）")
+	rootCmd.Flags().IntVarP(&countFlag, "count", "n", 1, "生成数量")
 }
 
 func readStdin() (string, error) {
@@ -179,40 +171,31 @@ func extractFirstImage(resp *genai.GenerateContentResponse) ([]byte, string, err
 	return nil, firstText, errNoImage
 }
 
-func printNoImageReason(resp *genai.GenerateContentResponse) {
-	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0] == nil {
-		_ = printNoImageReasonFromRaw()
-		return
+func extractFinishMessage(resp *genai.GenerateContentResponse, raw []byte) string {
+	if resp != nil && len(resp.Candidates) > 0 && resp.Candidates[0] != nil {
+		if msg := strings.TrimSpace(resp.Candidates[0].FinishMessage); msg != "" {
+			return msg
+		}
 	}
-	candidate := resp.Candidates[0]
-	if candidate.FinishMessage != "" {
-		fmt.Fprintln(os.Stderr, candidate.FinishMessage)
-	} else {
-		_ = printNoImageReasonFromRaw()
-	}
-}
-
-func printNoImageReasonFromRaw() bool {
-	if len(lastResponseBody) == 0 {
-		return false
+	if len(raw) == 0 {
+		return ""
 	}
 	var payload map[string]interface{}
-	if err := json.Unmarshal(lastResponseBody, &payload); err != nil {
-		return false
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
 	}
 	candidates, ok := payload["candidates"].([]interface{})
 	if !ok || len(candidates) == 0 {
-		return false
+		return ""
 	}
 	first, ok := candidates[0].(map[string]interface{})
 	if !ok {
-		return false
+		return ""
 	}
-	if msg, ok := first["finishMessage"].(string); ok && msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return true
+	if msg, ok := first["finishMessage"].(string); ok {
+		return strings.TrimSpace(msg)
 	}
-	return false
+	return ""
 }
 
 func buildOutputPath(outputDir, mimeType string) (string, error) {
@@ -289,11 +272,20 @@ func buildParts(text string, images []string) ([]*genai.Part, error) {
 		return nil, fmt.Errorf("too many reference images: %d (max 14)", len(images))
 	}
 	for _, path := range images {
-		data, err := os.ReadFile(path)
+		var data []byte
+		var mimeType string
+		var err error
+		if isURL(path) {
+			data, mimeType, err = fetchURL(path)
+		} else {
+			data, err = os.ReadFile(path)
+			if err == nil {
+				mimeType = detectMIME(path, data)
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
-		mimeType := detectMIME(path, data)
 		parts = append(parts, &genai.Part{
 			InlineData: &genai.Blob{
 				Data:     data,
@@ -315,6 +307,41 @@ func detectMIME(path string, data []byte) string {
 		return http.DetectContentType(data[:512])
 	}
 	return http.DetectContentType(data)
+}
+
+func isURL(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func fetchURL(rawURL string) ([]byte, string, error) {
+	client := &http.Client{Timeout: timeoutFlag}
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, "", fmt.Errorf("failed to download %s: %s", rawURL, resp.Status)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	mimeType := ""
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		if mediaType, _, err := mime.ParseMediaType(ct); err == nil {
+			mimeType = mediaType
+		}
+	}
+	if mimeType == "" {
+		mimeType = detectMIME("", data)
+	}
+	return data, mimeType, nil
 }
 
 type loggingTransport struct {
@@ -351,6 +378,7 @@ type captureTransport struct {
 	base    http.RoundTripper
 	apiKey  string
 	verbose bool
+	capture *responseCapture
 }
 
 func (t *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -375,7 +403,9 @@ func (t *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if err != nil {
 		return nil, err
 	}
-	captureResponseBody(responseBody)
+	if t.capture != nil {
+		t.capture.set(responseBody)
+	}
 	if t.verbose {
 		logHTTP("RESPONSE", fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)), req.URL.String(), resp.Header, responseBody, t.apiKey)
 	}
@@ -480,13 +510,73 @@ func truncateBytes(s, apiKey string) string {
 	return fmt.Sprintf("%s...(%d bytes)...%s", string(head), len(b), string(tail))
 }
 
-func captureResponseBody(body []byte) {
+type responseCapture struct {
+	mu   sync.Mutex
+	body []byte
+}
+
+func (c *responseCapture) set(body []byte) {
 	if len(body) == 0 {
 		return
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if len(body) > maxCaptureBytes {
-		lastResponseBody = append([]byte(nil), body[:maxCaptureBytes]...)
+		c.body = append([]byte(nil), body[:maxCaptureBytes]...)
 		return
 	}
-	lastResponseBody = append([]byte(nil), body...)
+	c.body = append([]byte(nil), body...)
+}
+
+func (c *responseCapture) get() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]byte(nil), c.body...)
+}
+
+func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *genai.GenerateContentConfig) (string, string, error) {
+	capture := &responseCapture{}
+	httpClient := &http.Client{Timeout: timeoutFlag}
+	httpClient.Transport = &captureTransport{
+		base:    http.DefaultTransport,
+		apiKey:  apiKey,
+		verbose: verboseFlag,
+		capture: capture,
+	}
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{HTTPClient: httpClient})
+	if err != nil {
+		return "", "", err
+	}
+
+	parts, err := buildParts(text, refs)
+	if err != nil {
+		return "", "", err
+	}
+	contents := []*genai.Content{{Parts: parts}}
+
+	resp, err := client.Models.GenerateContent(ctx, modelFlag, contents, cfg)
+	if err != nil {
+		return "", "", err
+	}
+
+	imageBytes, mimeType, err := extractFirstImage(resp)
+	if err != nil {
+		if errors.Is(err, errNoImage) {
+			return "", extractFinishMessage(resp, capture.get()), errNoImage
+		}
+		return "", "", err
+	}
+
+	outputPath, err := buildOutputPath(outFlag, mimeType)
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(outputPath, imageBytes, 0644); err != nil {
+		return "", "", err
+	}
+	absPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		return "", "", err
+	}
+	return absPath, "", nil
 }

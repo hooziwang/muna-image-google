@@ -36,8 +36,11 @@ MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" --timeout 5m --out outp
 # 详细 HTTP 日志（API Key 自动脱敏）
 MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" -v --out outputs
 
-# 使用参考图片（可重复，最多 14 张）
-MUNA_GEMINI_API_KEY=... go run . "办公室合影，搞怪表情" -r person1.png -r person2.png -r person3.png --out outputs
+# 使用参考图片（可重复，最多 14 张，支持本地路径或 URL）
+MUNA_GEMINI_API_KEY=... go run . "办公室合影，搞怪表情" -r person1.png -r person2.png -r https://example.com/person3.png --out outputs
+
+# 并行生成多张（每次并发生成一张）
+MUNA_GEMINI_API_KEY=... go run . "一只在海边跑步的狗" -n 3 --out outputs
 ```
 ```
 
@@ -50,7 +53,8 @@ MUNA_GEMINI_API_KEY=... go run . "办公室合影，搞怪表情" -r person1.png
 --size    图像尺寸（1K、2K、4K，默认：4K）
 --timeout 总超时（如 30s、5m，默认：5m）
 --verbose 详细日志（API Key 脱敏、长字段裁剪）
---ref     参考图片路径（可重复，最多 14 张）
+--ref     参考图片路径或 URL（可重复，最多 14 张）
+--count   生成数量（默认：1）
 ```
 
 ## 备注
