@@ -52,6 +52,9 @@ time cat prompt.txt | muna-image-google --out outputs
 
 # 仅统计生成命令耗时
 cat prompt.txt | time muna-image-google --out outputs
+
+# 检查所有 API Key 是否有效（并发）
+muna-image-google key
 ```
 
 ## 参数说明

@@ -127,6 +127,7 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.Flags().StringVarP(&modelFlag, "model", "m", "gemini-3-pro-image-preview", "模型 ID")
 	rootCmd.Flags().StringVarP(&outFlag, "out", "o", ".", "输出目录")
 	rootCmd.Flags().StringVarP(&aspectFlag, "aspect", "a", "", "宽高比（1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9）")
@@ -139,6 +140,10 @@ func init() {
 	rootCmd.SetUsageTemplate(`Usage:
   {{.UseLine}}
   cat prompt.txt | muna-image-google [flags]
+
+Commands:
+{{range .Commands}}{{if (or .IsAvailableCommand .IsAdditionalHelpTopicCommand)}}  {{rpad .Name .NamePadding }} {{.Short}}
+{{end}}{{end}}
 
 Flags:
 {{.Flags.FlagUsages | trimTrailingWhitespaces}}
