@@ -3,7 +3,7 @@
 ## 环境要求
 
 - Go 1.22+
-- 环境变量 `MUNA_GEMINI_API_KEY`
+- 环境变量 `MUNA_GEMINI_API_KEY`（可设置多个 key，调用时随机选择一个）
 
 ## 安装依赖
 
@@ -17,6 +17,12 @@ go mod tidy
 ```bash
 # 使用默认提示词生成
 MUNA_GEMINI_API_KEY=... go run .
+
+# 多个 key（可用逗号、分号、空白或换行分隔）
+export MUNA_GEMINI_API_KEY="key_1
+key_2
+key_3"
+go run . "一个小机器人在画夕阳" --out outputs
 
 # 自定义提示词
 MUNA_GEMINI_API_KEY=... go run . "一个小机器人在画夕阳" --out outputs

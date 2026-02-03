@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"mime"
 	"net/http"
 	"os"
@@ -61,7 +62,7 @@ var rootCmd = &cobra.Command{
 			text = defaultPrompt
 		}
 
-		apiKey := requireMunaGeminiAPIKey()
+		apiKeys := requireMunaGeminiAPIKeys()
 		disableLocalGeminiBaseURL()
 
 		cfg := &genai.GenerateContentConfig{
@@ -87,6 +88,7 @@ var rootCmd = &cobra.Command{
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				apiKey := pickRandomKey(apiKeys)
 				absPath, finishMessage, err := generateOnce(ctx, apiKey, text, refPaths, cfg)
 				if err != nil {
 					if errors.Is(err, errNoImage) {
@@ -238,13 +240,46 @@ func extensionFromMIME(mimeType string) string {
 	}
 }
 
-func requireMunaGeminiAPIKey() string {
-	key := strings.TrimSpace(os.Getenv("MUNA_GEMINI_API_KEY"))
-	if key == "" {
+func requireMunaGeminiAPIKeys() []string {
+	raw := strings.TrimSpace(os.Getenv("MUNA_GEMINI_API_KEY"))
+	keys := splitAPIKeys(raw)
+	if len(keys) == 0 {
 		log.Fatal("missing MUNA_GEMINI_API_KEY")
 	}
-	_ = os.Setenv("GEMINI_API_KEY", key)
-	return key
+	return keys
+}
+
+func splitAPIKeys(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		switch r {
+		case ',', ';', ' ', '\t', '\n', '\r':
+			return true
+		default:
+			return false
+		}
+	})
+	keys := make([]string, 0, len(parts))
+	for _, part := range parts {
+		key := strings.TrimSpace(part)
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func pickRandomKey(keys []string) string {
+	if len(keys) == 1 {
+		return keys[0]
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(keys))))
+	if err != nil {
+		return keys[0]
+	}
+	return keys[n.Int64()]
 }
 
 func disableLocalGeminiBaseURL() {
@@ -543,7 +578,10 @@ func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *
 		verbose: verboseFlag,
 		capture: capture,
 	}
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{HTTPClient: httpClient})
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		HTTPClient: httpClient,
+		APIKey:     apiKey,
+	})
 	if err != nil {
 		return "", "", err
 	}
