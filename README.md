@@ -70,6 +70,30 @@ muna-image-google key
 --count   生成数量（默认：1）
 ```
 
+## 行为说明
+
+- 输出目录：`--out` 是目录，不是文件名。
+- 输出文件名：`YYYYMMDD` + 12 位大写字母数字 + 扩展名（按 MIME 推断，未知为 `.jpg`）。
+- 输出内容：
+  - 成功时：只输出生成文件的绝对路径。
+  - 失败且无图时（非 `-v`）：只输出 `finishMessage` 内容并以非 0 退出码结束。
+- 并发生成：`-n/--count` 会并发发起请求；**每次请求前随机选择一个 key**。
+- 参考图片：`-r/--ref` 最多 14 张；URL 会被下载并以 `inlineData` 发送，URL 不可访问会直接失败。
+- 多 key 分隔：逗号、分号、空白、换行均可分隔。
+- 提示词输入：有位置参数时优先生效；无位置参数时才读取 stdin。
+- 详细日志：`-v` 会打印请求/响应日志，API Key 自动脱敏、长字段裁剪。
+
+## key 子命令
+
+- 用法：`muna-image-google key`
+- 作用：并发检查 `MUNA_GEMINI_API_KEY` 中的所有 key 是否有效。
+- 输出格式：
+  - key 打码为前 4 + `...` + 后 8
+  - 成功：亮绿色 `OK`
+  - 失败：亮红色 `FAIL`，并输出 `code reason message`
+- 退出码：只要有一个失败则退出码非 0。
+- 超时：`muna-image-google key --timeout 5s`
+
 ## 备注
 
 - 默认模型为 `gemini-3-pro-image-preview`。
