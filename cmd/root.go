@@ -41,9 +41,12 @@ var errNoImage = errors.New("no image data returned")
 
 var rootCmd = &cobra.Command{
 	Use:   "muna-image-google [prompt]",
-	Short: "使用 Gemini API 生成图像",
-	Long: "使用 Gemini API 生成图像。\n" +
-		"提示词可用位置参数提供，也可从标准输入读取。",
+	Short: "使用原生 Gemini API 生成图像",
+	Long:  "使用原生 Gemini API 生成图像。",
+	Example: "  # 使用位置参数\n" +
+		"  muna-image-google \"一只在海边跑步的狗\"\n\n" +
+		"  # 从标准输入读取提示词\n" +
+		"  cat prompt.txt | muna-image-google\n",
 	Args: cobra.RangeArgs(0, 1),
 	Run: func(_ *cobra.Command, args []string) {
 		log.SetFlags(0)
@@ -132,6 +135,14 @@ func init() {
 	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "详细日志（脱敏 API Key，长字段裁剪）")
 	rootCmd.Flags().StringArrayVarP(&refPaths, "ref", "r", nil, "参考图片路径（可重复，最多 14 张）")
 	rootCmd.Flags().IntVarP(&countFlag, "count", "n", 1, "生成数量")
+
+	rootCmd.SetUsageTemplate(`Usage:
+  {{.UseLine}}
+  cat prompt.txt | muna-image-google [flags]
+
+Flags:
+{{.Flags.FlagUsages | trimTrailingWhitespaces}}
+`)
 }
 
 func readStdin() (string, error) {

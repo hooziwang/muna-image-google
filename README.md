@@ -1,53 +1,57 @@
-运用 Gemini API 生成图像的 Go 命令行工具。
+运用 Gemini API 生成图像的命令行工具。
 
 ## 环境要求
 
 - Go 1.22+
 - 环境变量 `MUNA_GEMINI_API_KEY`（可设置多个 key，调用时随机选择一个）
 
-## 安装依赖
-
-```bash
-go mod tidy
-```
-
 ## 使用方式
 
 ```bash
-```bash
+# 先设置环境变量（只需设置一次，后续命令无需重复）
+export MUNA_GEMINI_API_KEY="你的 key"
+
 # 使用默认提示词生成
-MUNA_GEMINI_API_KEY=... go run .
+muna-image-google
 
 # 多个 key（可用逗号、分号、空白或换行分隔）
 export MUNA_GEMINI_API_KEY="key_1
 key_2
 key_3"
-go run . "一个小机器人在画夕阳" --out outputs
+muna-image-google "一个小机器人在画夕阳" --out outputs
 
 # 自定义提示词
-MUNA_GEMINI_API_KEY=... go run . "一个小机器人在画夕阳" --out outputs
+muna-image-google "一个小机器人在画夕阳" --out outputs
 
 # 通过 stdin 提供提示词
-echo "清晨的未来城市天际线" | MUNA_GEMINI_API_KEY=... go run . --out outputs
+echo "清晨的未来城市天际线" | muna-image-google --out outputs
+
+# 通过文件提供提示词（管道）
+cat prompt.txt | muna-image-google --out outputs
 
 # 指定模型
-MUNA_GEMINI_API_KEY=... go run . --model gemini-3-pro-image-preview "极简风茶馆 logo" --out outputs
+muna-image-google --model gemini-3-pro-image-preview "极简风茶馆 logo" --out outputs
 
 # 设置宽高比与尺寸（适用于 gemini-3-pro-image-preview）
-MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
+muna-image-google "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
 
 # 增加超时
-MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" --timeout 5m --out outputs
+muna-image-google "现代咖啡馆室内" --timeout 5m --out outputs
 
 # 详细 HTTP 日志（API Key 自动脱敏）
-MUNA_GEMINI_API_KEY=... go run . "现代咖啡馆室内" -v --out outputs
+muna-image-google "现代咖啡馆室内" -v --out outputs
 
 # 使用参考图片（可重复，最多 14 张，支持本地路径或 URL）
-MUNA_GEMINI_API_KEY=... go run . "办公室合影，搞怪表情" -r person1.png -r person2.png -r https://example.com/person3.png --out outputs
+muna-image-google "办公室合影，搞怪表情" -r person1.png -r person2.png -r https://example.com/person3.png --out outputs
 
 # 并行生成多张（每次并发生成一张）
-MUNA_GEMINI_API_KEY=... go run . "一只在海边跑步的狗" -n 3 --out outputs
-```
+muna-image-google "一只在海边跑步的狗" -n 3 --out outputs
+
+# 统计管道整体耗时
+time cat prompt.txt | muna-image-google --out outputs
+
+# 仅统计生成命令耗时
+cat prompt.txt | time muna-image-google --out outputs
 ```
 
 ## 参数说明
