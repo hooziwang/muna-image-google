@@ -109,14 +109,21 @@ var rootCmd = &cobra.Command{
 				absPath, finishMessage, err := generateOnce(ctx, apiKey, text, refPaths, &cfg, seed)
 				if err != nil {
 					if errors.Is(err, errNoImage) {
-						if !verboseFlag && finishMessage != "" {
+						if !verboseFlag {
 							outputMu.Lock()
-							fmt.Fprintln(os.Stderr, finishMessage)
+							if finishMessage != "" {
+								fmt.Fprintln(os.Stderr, finishMessage)
+							} else {
+								fmt.Fprintln(os.Stderr, errNoImage.Error())
+							}
 							outputMu.Unlock()
 						}
 						errCh <- err
 						return
 					}
+					outputMu.Lock()
+					fmt.Fprintln(os.Stderr, err.Error())
+					outputMu.Unlock()
 					errCh <- err
 					return
 				}

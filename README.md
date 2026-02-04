@@ -2,7 +2,7 @@
 
 ## 环境要求
 
-- Go 1.22+
+- Go 1.24+
 - 环境变量 `MUNA_GEMINI_API_KEY`（可设置多个 key，调用时随机选择一个）
 
 ## 使用方式
@@ -35,7 +35,7 @@ muna-image-google --model gemini-3-pro-image-preview "极简风茶馆 logo" --ou
 # 设置宽高比与尺寸（适用于 gemini-3-pro-image-preview）
 muna-image-google "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
 
-# 指定随机种子（0-2147483647）
+# 指定种子（0-2147483647）
 muna-image-google "现代咖啡馆室内" --seed 1011567824 --out outputs
 
 # 增加超时
