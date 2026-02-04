@@ -33,9 +33,11 @@ var (
 	verboseFlag bool
 	refPaths []string
 	countFlag int
+	seedFlag int64
 )
 
 const maxCaptureBytes = 2 << 20
+const maxSeedValue = int64(2147483647)
 
 var errNoImage = errors.New("no image data returned")
 
@@ -48,7 +50,7 @@ var rootCmd = &cobra.Command{
 		"  # 从标准输入读取提示词\n" +
 		"  cat prompt.txt | muna-image-google\n",
 	Args: cobra.RangeArgs(0, 1),
-	Run: func(_ *cobra.Command, args []string) {
+	Run: func(cmd *cobra.Command, args []string) {
 		log.SetFlags(0)
 		var text string
 		if len(args) > 0 {
@@ -68,11 +70,11 @@ var rootCmd = &cobra.Command{
 		apiKeys := requireMunaGeminiAPIKeys()
 		disableLocalGeminiBaseURL()
 
-		cfg := &genai.GenerateContentConfig{
+		baseCfg := &genai.GenerateContentConfig{
 			SafetySettings: defaultSafetySettings(),
 		}
 		if aspectFlag != "" || sizeFlag != "" {
-			cfg.ImageConfig = &genai.ImageConfig{
+			baseCfg.ImageConfig = &genai.ImageConfig{
 				AspectRatio: aspectFlag,
 				ImageSize:   sizeFlag,
 			}
@@ -80,6 +82,11 @@ var rootCmd = &cobra.Command{
 
 		if countFlag < 1 {
 			log.Fatal("count must be >= 1")
+		}
+
+		seedSpecified := cmd.Flags().Changed("seed")
+		if seedSpecified && (seedFlag < 0 || seedFlag > maxSeedValue) {
+			log.Fatalf("seed must be between 0 and %d", maxSeedValue)
 		}
 
 		ctx := context.Background()
@@ -92,7 +99,14 @@ var rootCmd = &cobra.Command{
 			go func() {
 				defer wg.Done()
 				apiKey := pickRandomKey(apiKeys)
-				absPath, finishMessage, err := generateOnce(ctx, apiKey, text, refPaths, cfg)
+				seed, err := resolveSeed(seedSpecified, seedFlag)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				cfg := *baseCfg
+				cfg.Seed = &seed
+				absPath, finishMessage, err := generateOnce(ctx, apiKey, text, refPaths, &cfg, seed)
 				if err != nil {
 					if errors.Is(err, errNoImage) {
 						if !verboseFlag && finishMessage != "" {
@@ -136,6 +150,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "详细日志（脱敏 API Key，长字段裁剪）")
 	rootCmd.Flags().StringArrayVarP(&refPaths, "ref", "r", nil, "参考图片路径（可重复，最多 14 张）")
 	rootCmd.Flags().IntVarP(&countFlag, "count", "n", 1, "生成数量")
+	rootCmd.Flags().Int64VarP(&seedFlag, "seed", "s", 0, "指定种子（0-2147483647）")
 
 	rootCmd.SetUsageTemplate(`Usage:
   {{.UseLine}}
@@ -144,9 +159,9 @@ func init() {
 Commands:
 {{range .Commands}}{{if (or .IsAvailableCommand .IsAdditionalHelpTopicCommand)}}  {{rpad .Name .NamePadding }} {{.Short}}
 {{end}}{{end}}
-
 Flags:
 {{.Flags.FlagUsages | trimTrailingWhitespaces}}
+
 `)
 }
 
@@ -216,7 +231,7 @@ func extractFinishMessage(resp *genai.GenerateContentResponse, raw []byte) strin
 	return ""
 }
 
-func buildOutputPath(outputDir, mimeType string) (string, error) {
+func buildOutputPath(outputDir, mimeType string, seed int32) (string, error) {
 	dir := strings.TrimSpace(outputDir)
 	if dir == "" {
 		dir = "."
@@ -226,7 +241,7 @@ func buildOutputPath(outputDir, mimeType string) (string, error) {
 	}
 
 	ext := extensionFromMIME(mimeType)
-	filename := time.Now().Format("20060102") + randomUpperAlnum(12) + ext
+	filename := fmt.Sprintf("%s%s-%d%s", time.Now().Format("20060102"), randomUpperAlnum(12), seed, ext)
 	return filepath.Join(dir, filename), nil
 }
 
@@ -241,6 +256,17 @@ func randomUpperAlnum(n int) string {
 		b[i] = alphabet[int(b[i])%len(alphabet)]
 	}
 	return string(b)
+}
+
+func resolveSeed(seedSpecified bool, seedValue int64) (int32, error) {
+	if seedSpecified {
+		return int32(seedValue), nil
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(maxSeedValue+1))
+	if err != nil {
+		return 0, err
+	}
+	return int32(n.Int64()), nil
 }
 
 func extensionFromMIME(mimeType string) string {
@@ -585,7 +611,7 @@ func (c *responseCapture) get() []byte {
 	return append([]byte(nil), c.body...)
 }
 
-func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *genai.GenerateContentConfig) (string, string, error) {
+func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *genai.GenerateContentConfig, seed int32) (string, string, error) {
 	capture := &responseCapture{}
 	httpClient := &http.Client{Timeout: timeoutFlag}
 	httpClient.Transport = &captureTransport{
@@ -621,7 +647,7 @@ func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *
 		return "", "", err
 	}
 
-	outputPath, err := buildOutputPath(outFlag, mimeType)
+	outputPath, err := buildOutputPath(outFlag, mimeType, seed)
 	if err != nil {
 		return "", "", err
 	}

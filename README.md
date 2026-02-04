@@ -35,6 +35,9 @@ muna-image-google --model gemini-3-pro-image-preview "极简风茶馆 logo" --ou
 # 设置宽高比与尺寸（适用于 gemini-3-pro-image-preview）
 muna-image-google "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
 
+# 指定随机种子（0-2147483647）
+muna-image-google "现代咖啡馆室内" --seed 1011567824 --out outputs
+
 # 增加超时
 muna-image-google "现代咖啡馆室内" --timeout 5m --out outputs
 
@@ -68,16 +71,18 @@ muna-image-google key
 --verbose 详细日志（API Key 脱敏、长字段裁剪）
 --ref     参考图片路径或 URL（可重复，最多 14 张）
 --count   生成数量（默认：1）
+--seed    指定种子（0-2147483647，别名 -s）
 ```
 
 ## 行为说明
 
 - 输出目录：`--out` 是目录，不是文件名。
-- 输出文件名：`YYYYMMDD` + 12 位大写字母数字 + 扩展名（按 MIME 推断，未知为 `.jpg`）。
+- 输出文件名：`YYYYMMDD` + 12 位大写字母数字 + `-seed` + 扩展名（按 MIME 推断，未知为 `.jpg`）。
 - 输出内容：
   - 成功时：只输出生成文件的绝对路径。
   - 失败且无图时（非 `-v`）：只输出 `finishMessage` 内容并以非 0 退出码结束。
 - 并发生成：`-n/--count` 会并发发起请求；**每次请求前随机选择一个 key**。
+- 种子：用于尽量稳定复现生成结果的随机因子。指定 `--seed` 时使用该种子生成图像；未指定时本地随机生成种子。相同提示词/参数/模型 + 相同种子时，模型会尽力给出一致结果（仍可能存在轻微差异）。
 - 参考图片：`-r/--ref` 最多 14 张；URL 会被下载并以 `inlineData` 发送，URL 不可访问会直接失败。
 - 多 key 分隔：逗号、分号、空白、换行均可分隔。
 - 提示词输入：有位置参数时优先生效；无位置参数时才读取 stdin。
