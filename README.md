@@ -44,6 +44,11 @@ muna-image-google "现代咖啡馆室内" --timeout 5m --out outputs
 # 详细 HTTP 日志（API Key 自动脱敏）
 muna-image-google "现代咖啡馆室内" -v --out outputs
 
+# 使用 -v 时会把请求头里的 X-Goog-Api-Key 打码显示（前 4 + ... + 后 8）
+
+# 指定使用某个/某些 key（支持输入部分字符进行模糊匹配；可重复）
+muna-image-google "女孩自拍照片" --aspect 21:9 -k Bxj91F48 --out outputs
+
 # 使用参考图片（可重复，最多 14 张，支持本地路径或 URL）
 muna-image-google "办公室合影，搞怪表情" -r person1.png -r person2.png -r https://example.com/person3.png --out outputs
 
@@ -69,6 +74,7 @@ muna-image-google key
 --size    图像尺寸（1K、2K、4K，默认：4K）
 --timeout 总超时（如 30s、5m，默认：5m）
 --verbose 详细日志（API Key 脱敏、长字段裁剪）
+--key     指定使用的 API Key（可重复；支持输入 key 的部分字符进行模糊匹配）
 --ref     参考图片路径或 URL（可重复，最多 14 张）
 --count   生成数量（默认：1）
 --seed    指定种子（0-2147483647，别名 -s）
@@ -82,6 +88,10 @@ muna-image-google key
   - 成功时：只输出生成文件的绝对路径。
   - 失败且无图时（非 `-v`）：只输出 `finishMessage` 内容并以非 0 退出码结束。
 - 并发生成：`-n/--count` 会并发发起请求；**每次请求前随机选择一个 key**。
+- 指定 key：使用 `-k/--key` 传入 key 的任意子串进行模糊匹配；
+  - 任意一个模式匹配不到 key：直接报错
+  - 匹配到 1 个 key：固定使用该 key
+  - 匹配到多个 key：在匹配到的 key 中随机选择
 - 种子：用于尽量稳定复现生成结果的随机因子。指定 `--seed` 时使用该种子生成图像；未指定时本地随机生成种子。相同提示词/参数/模型 + 相同种子时，模型会尽力给出一致结果（仍可能存在轻微差异）。
 - 参考图片：`-r/--ref` 最多 14 张；URL 会被下载并以 `inlineData` 发送，URL 不可访问会直接失败。
 - 多 key 分隔：逗号、分号、空白、换行均可分隔。

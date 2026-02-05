@@ -25,21 +25,22 @@ import (
 const defaultPrompt = "Create a picture of a nano banana dish in a fancy restaurant with a Gemini theme."
 
 var (
-	modelFlag  string
-	outFlag    string
-	aspectFlag string
-	sizeFlag   string
+	modelFlag   string
+	outFlag     string
+	aspectFlag  string
+	sizeFlag    string
 	timeoutFlag time.Duration
 	verboseFlag bool
-	refPaths []string
-	countFlag int
-	seedFlag int64
+	keyPatterns []string
+	refPaths    []string
+	countFlag   int
+	seedFlag    int64
 )
 
 const maxCaptureBytes = 2 << 20
 const maxSeedValue = int64(2147483647)
 
-var errNoImage = errors.New("no image data returned")
+var errNoImage = errors.New("未返回图像数据")
 
 var rootCmd = &cobra.Command{
 	Use:   "muna-image-google [prompt]",
@@ -68,6 +69,11 @@ var rootCmd = &cobra.Command{
 		}
 
 		apiKeys := requireMunaGeminiAPIKeys()
+		filteredKeys, err := filterAPIKeys(apiKeys, keyPatterns)
+		if err != nil {
+			log.Fatal(err)
+		}
+		apiKeys = filteredKeys
 		disableLocalGeminiBaseURL()
 
 		baseCfg := &genai.GenerateContentConfig{
@@ -81,12 +87,12 @@ var rootCmd = &cobra.Command{
 		}
 
 		if countFlag < 1 {
-			log.Fatal("count must be >= 1")
+			log.Fatal("count 必须 >= 1")
 		}
 
 		seedSpecified := cmd.Flags().Changed("seed")
 		if seedSpecified && (seedFlag < 0 || seedFlag > maxSeedValue) {
-			log.Fatalf("seed must be between 0 and %d", maxSeedValue)
+			log.Fatalf("seed 必须在 0 到 %d 之间", maxSeedValue)
 		}
 
 		ctx := context.Background()
@@ -155,6 +161,7 @@ func init() {
 	rootCmd.Flags().StringVar(&sizeFlag, "size", "4K", "图像尺寸（1K, 2K, 4K，适用于 gemini-3-pro-image-preview）")
 	rootCmd.Flags().DurationVar(&timeoutFlag, "timeout", 5*time.Minute, "总超时（例如 30s, 5m）")
 	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "详细日志（脱敏 API Key，长字段裁剪）")
+	rootCmd.Flags().StringArrayVarP(&keyPatterns, "key", "k", nil, "指定使用的 API Key（可重复；支持输入 key 的部分字符进行模糊匹配）")
 	rootCmd.Flags().StringArrayVarP(&refPaths, "ref", "r", nil, "参考图片路径（可重复，最多 14 张）")
 	rootCmd.Flags().IntVarP(&countFlag, "count", "n", 1, "生成数量")
 	rootCmd.Flags().Int64VarP(&seedFlag, "seed", "s", 0, "指定种子（0-2147483647）")
@@ -195,7 +202,7 @@ func readStdin() (string, error) {
 
 func extractFirstImage(resp *genai.GenerateContentResponse) ([]byte, string, error) {
 	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
-		return nil, "", errors.New("no candidates returned")
+		return nil, "", errors.New("未返回 candidates")
 	}
 
 	var firstText string
@@ -293,7 +300,7 @@ func requireMunaGeminiAPIKeys() []string {
 	raw := strings.TrimSpace(os.Getenv("MUNA_GEMINI_API_KEY"))
 	keys := splitAPIKeys(raw)
 	if len(keys) == 0 {
-		log.Fatal("missing MUNA_GEMINI_API_KEY")
+		log.Fatal("缺少环境变量 MUNA_GEMINI_API_KEY")
 	}
 	return keys
 }
@@ -318,6 +325,38 @@ func splitAPIKeys(raw string) []string {
 		}
 	}
 	return keys
+}
+
+func filterAPIKeys(apiKeys []string, patterns []string) ([]string, error) {
+	if len(patterns) == 0 {
+		return apiKeys, nil
+	}
+	filtered := make(map[string]struct{})
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			return nil, errors.New("key 参数不能为空")
+		}
+		found := false
+		for _, key := range apiKeys {
+			if strings.Contains(key, pattern) {
+				filtered[key] = struct{}{}
+				found = true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("未找到匹配的 API Key：%s", pattern)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return nil, errors.New("未找到任何匹配的 API Key")
+	}
+	out := make([]string, 0, len(filtered))
+	for key := range filtered {
+		out = append(out, key)
+	}
+	return out, nil
 }
 
 func pickRandomKey(keys []string) string {
@@ -528,7 +567,11 @@ func logHTTP(kind, statusOrMethod, url string, headers http.Header, body []byte,
 	sanitizedURL := redactString(url, apiKey)
 	log.Printf("%s %s %s", kind, statusOrMethod, sanitizedURL)
 	for k, v := range headers {
-		if strings.EqualFold(k, "x-goog-api-key") || strings.EqualFold(k, "authorization") {
+		if strings.EqualFold(k, "x-goog-api-key") {
+			log.Printf("%s: %s", k, maskKey(apiKey))
+			continue
+		}
+		if strings.EqualFold(k, "authorization") {
 			log.Printf("%s: %s", k, "[REDACTED]")
 			continue
 		}

@@ -39,7 +39,7 @@ var keyCmd = &cobra.Command{
 		log.SetFlags(0)
 		keys := requireMunaGeminiAPIKeys()
 		if len(keys) == 0 {
-			log.Fatal("missing MUNA_GEMINI_API_KEY")
+			log.Fatal("缺少环境变量 MUNA_GEMINI_API_KEY")
 		}
 
 		ctx := context.Background()
