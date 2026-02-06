@@ -263,6 +263,22 @@ muna-image-google model gemini
 muna-image-google model --json
 ```
 
+## 发布（Release）
+
+- 当推送 semver 格式的 tag（`v*.*.*`，例如 `v0.1.0`）时，GitHub Actions 会使用 GoReleaser 自动触发发布流程：
+  - 交叉编译多个平台：Linux/macOS/Windows（amd64、arm64）
+  - 执行 smoke test（在 Linux/macOS/Windows runner 上运行二进制 `--help`）
+  - 自动创建或更新对应的 GitHub Release
+  - 自动上传各平台压缩包产物（Windows 为 `.zip`，其他平台为 `.tar.gz`）
+  - 自动生成并上传 `checksums.txt`（SHA256）
+
+示例：
+
+```bash
+git tag -a v0.1.1 -m "release: 版本说明"
+git push origin v0.1.1
+```
+
 ## 备注
 
 - 默认模型为 `gemini-3-pro-image-preview`。
