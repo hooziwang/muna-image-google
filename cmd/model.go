@@ -151,4 +151,3 @@ func init() {
 	rootCmd.AddCommand(modelCmd)
 	modelCmd.Flags().BoolVar(&modelJSONFlag, "json", false, "以 JSON 输出完整模型信息")
 }
-
