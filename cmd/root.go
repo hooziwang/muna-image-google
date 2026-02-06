@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ var (
 	sizeFlag    string
 	timeoutFlag time.Duration
 	verboseFlag bool
+	dryRunFlag  bool
 	keyPatterns []string
 	refPaths    []string
 	countFlag   int
@@ -47,7 +49,9 @@ var rootCmd = &cobra.Command{
 	Example: "  # 使用位置参数\n" +
 		"  muna-image-google \"一只在海边跑步的狗\"\n\n" +
 		"  # 从标准输入读取提示词\n" +
-		"  cat prompt.txt | muna-image-google\n",
+		"  cat prompt.txt | muna-image-google\n\n" +
+		"  # 仅查看请求配置（不调用 API）\n" +
+		"  muna-image-google --dry-run \"一只在海边跑步的狗\"\n",
 	Args: cobra.RangeArgs(0, 1),
 	Run: func(cmd *cobra.Command, args []string) {
 		log.SetFlags(0)
@@ -94,6 +98,11 @@ var rootCmd = &cobra.Command{
 		seedSpecified := cmd.Flags().Changed("seed")
 		if seedSpecified && (seedFlag < 0 || seedFlag > maxSeedValue) {
 			log.Fatalf("seed 必须在 0 到 %d 之间", maxSeedValue)
+		}
+
+		if dryRunFlag {
+			printDryRun(text, refPaths, baseCfg, seedSpecified, seedFlag, countFlag)
+			return
 		}
 
 		ctx := context.Background()
@@ -161,6 +170,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&aspectFlag, "aspect", "a", "", "宽高比（1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9）")
 	rootCmd.Flags().StringVar(&sizeFlag, "size", "4K", "图像尺寸（1K, 2K, 4K，适用于 gemini-3-pro-image-preview）")
 	rootCmd.Flags().DurationVar(&timeoutFlag, "timeout", 5*time.Minute, "总超时（例如 30s, 5m）")
+	rootCmd.Flags().BoolVarP(&dryRunFlag, "dry-run", "D", false, "仅打印请求配置，不会发生真实的请求。")
 	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "详细日志（脱敏 API Key，长字段裁剪）")
 	rootCmd.Flags().StringArrayVarP(&keyPatterns, "key", "k", nil, "指定使用的 API Key（可重复；支持输入 key 的部分字符进行模糊匹配）")
 	rootCmd.Flags().StringArrayVarP(&refPaths, "ref", "r", nil, "参考图片路径（可重复，最多 14 张）")
@@ -244,6 +254,122 @@ func extractFinishMessage(resp *genai.GenerateContentResponse, raw []byte) strin
 		return strings.TrimSpace(msg)
 	}
 	return ""
+}
+
+func printDryRun(text string, refs []string, cfg *genai.GenerateContentConfig, seedSpecified bool, seedValue int64, count int) {
+	snapshot, err := buildDryRunSnapshot(text, refs, cfg, seedSpecified, seedValue, count)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var payload interface{} = snapshot
+	sanitizePayload(&payload, "")
+
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(data))
+}
+
+func buildDryRunSnapshot(text string, refs []string, cfg *genai.GenerateContentConfig, seedSpecified bool, seedValue int64, count int) (map[string]interface{}, error) {
+	parts, err := buildParts(text, refs)
+	if err != nil {
+		return nil, err
+	}
+
+	partSnapshots := make([]map[string]interface{}, 0, len(parts))
+	for _, part := range parts {
+		if part == nil {
+			continue
+		}
+		if part.Text != "" {
+			partSnapshots = append(partSnapshots, map[string]interface{}{"text": part.Text})
+			continue
+		}
+		if part.InlineData != nil {
+			partSnapshots = append(partSnapshots, map[string]interface{}{
+				"inlineData": map[string]interface{}{
+					"mimeType": part.InlineData.MIMEType,
+					"data":     base64.StdEncoding.EncodeToString(part.InlineData.Data),
+				},
+			})
+		}
+	}
+
+	request := map[string]interface{}{
+		"model": modelFlag,
+		"contents": []map[string]interface{}{
+			{"parts": partSnapshots},
+		},
+		"config": buildDryRunConfigSnapshot(cfg, seedSpecified, seedValue),
+	}
+
+	execution := map[string]interface{}{
+		"count": count,
+	}
+	if seedSpecified {
+		execution["seedMode"] = "fixed"
+	} else {
+		execution["seedMode"] = "random-per-request"
+	}
+
+	return map[string]interface{}{
+		"request":   request,
+		"execution": execution,
+	}, nil
+}
+
+func buildDryRunConfigSnapshot(cfg *genai.GenerateContentConfig, seedSpecified bool, seedValue int64) map[string]interface{} {
+	out := map[string]interface{}{}
+	if cfg == nil {
+		return out
+	}
+
+	if cfg.ImageConfig != nil {
+		imageCfg := map[string]interface{}{}
+		if strings.TrimSpace(cfg.ImageConfig.AspectRatio) != "" {
+			imageCfg["aspectRatio"] = cfg.ImageConfig.AspectRatio
+		}
+		if strings.TrimSpace(cfg.ImageConfig.ImageSize) != "" {
+			imageCfg["imageSize"] = cfg.ImageConfig.ImageSize
+		}
+		if len(imageCfg) > 0 {
+			out["imageConfig"] = imageCfg
+		}
+	}
+
+	if len(cfg.SafetySettings) > 0 {
+		safetySettings := make([]map[string]interface{}, 0, len(cfg.SafetySettings))
+		for _, setting := range cfg.SafetySettings {
+			if setting == nil {
+				continue
+			}
+			item := map[string]interface{}{}
+			category := strings.TrimSpace(string(setting.Category))
+			if category != "" {
+				item["category"] = category
+			}
+			threshold := strings.TrimSpace(string(setting.Threshold))
+			if threshold != "" {
+				item["threshold"] = threshold
+			}
+			if len(item) > 0 {
+				safetySettings = append(safetySettings, item)
+			}
+		}
+		if len(safetySettings) > 0 {
+			out["safetySettings"] = safetySettings
+		}
+	}
+
+	if seedSpecified {
+		out["seed"] = seedValue
+	} else {
+		out["seed"] = "random"
+	}
+
+	return out
 }
 
 func buildOutputPath(outputDir, mimeType string, seed int32) (string, error) {

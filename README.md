@@ -38,6 +38,9 @@ muna-image-google "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
 # 指定种子（0-2147483647）
 muna-image-google "现代咖啡馆室内" --seed 1011567824 --out outputs
 
+# 仅查看请求配置（不调用 API）
+muna-image-google "现代咖啡馆室内" --seed 1011567824 --dry-run
+
 # 增加超时
 muna-image-google "现代咖啡馆室内" --timeout 5m --out outputs
 
@@ -73,6 +76,7 @@ muna-image-google key
 --aspect  宽高比（如 1:1、16:9）
 --size    图像尺寸（1K、2K、4K，默认：4K）
 --timeout 总超时（如 30s、5m，默认：5m）
+--dry-run 仅打印请求配置，不会发生真实的请求。
 --verbose 详细日志（API Key 脱敏、长字段裁剪）
 --key     指定使用的 API Key（可重复；支持输入 key 的部分字符进行模糊匹配）
 --ref     参考图片路径或 URL（可重复，最多 14 张）
@@ -93,6 +97,7 @@ muna-image-google key
   - 匹配到 1 个 key：固定使用该 key
   - 匹配到多个 key：在匹配到的 key 中随机选择
 - 种子：用于尽量稳定复现生成结果的随机因子。指定 `--seed` 时使用该种子生成图像；未指定时本地随机生成种子。相同提示词/参数/模型 + 相同种子时，模型会尽力给出一致结果（仍可能存在轻微差异）。
+- dry-run：使用 `-D/--dry-run` 仅打印最终请求配置，不会发生真实的请求。
 - 参考图片：`-r/--ref` 最多 14 张；URL 会被下载并以 `inlineData` 发送，URL 不可访问会直接失败。
 - 多 key 分隔：逗号、分号、空白、换行均可分隔。
 - 提示词输入：有位置参数时优先生效；无位置参数时才读取 stdin。
