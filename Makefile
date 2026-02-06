@@ -2,15 +2,21 @@ BINARY_NAME=muna-image-google
 BUILD_DIR=bin
 GOPATH=$(shell go env GOPATH)
 
-.PHONY: all build install clean
 
-all: build install
+.PHONY: all build test install clean
+
+all: build test install
 
 build:
 	@echo "Building..."
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) .
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+
+test:
+	@echo "Testing..."
+	go test ./...
+	@echo "Test complete"
 
 install:
 	@echo "Installing..."

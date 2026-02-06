@@ -5,8 +5,11 @@
 ## 安装与构建
 
 ```bash
-# 构建并安装到 GOPATH/bin
+# 编译、测试并安装到 GOPATH/bin
 make
+
+# 或仅测试
+go test ./...
 
 # 或仅安装
 go install .
