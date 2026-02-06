@@ -1,137 +1,264 @@
+# muna-image-google
+
 运用 Gemini API 生成图像的命令行工具。
 
-## 环境要求
-
-- Go 1.24+
-- 环境变量 `MUNA_GEMINI_API_KEY`（可设置多个 key，调用时随机选择一个）
-
-## 使用方式
+## 安装与构建
 
 ```bash
-# 先设置环境变量（只需设置一次，后续命令无需重复）
-export MUNA_GEMINI_API_KEY="你的 key"
+# 构建并安装到 GOPATH/bin
+make
 
-# 无参数且无 stdin 时显示帮助
-muna-image-google
+# 或仅安装
+go install .
+```
 
-# 多个 key（可用逗号、分号、空白或换行分隔）
+## 环境变量
+
+- `MUNA_GEMINI_API_KEY`：Gemini API Key，必填。
+  - 支持配置多个 key
+  - 支持分隔符：逗号、分号、空白、换行
+  - 运行时会随机选取 key（`--key` 过滤后在结果集里随机）
+
+示例：
+
+```bash
 export MUNA_GEMINI_API_KEY="key_1
 key_2
 key_3"
+```
+
+## 基本用法
+
+```bash
+# 无参数且无 stdin 时显示帮助
+muna-image-google
+
+# 使用提示词生成
 muna-image-google "一个小机器人在画夕阳" --out outputs
 
-# 自定义提示词
-muna-image-google "一个小机器人在画夕阳" --out outputs
-
-# 通过 stdin 提供提示词
+# 通过 stdin 传提示词
 echo "清晨的未来城市天际线" | muna-image-google --out outputs
-
-# 通过文件提供提示词（管道）
-cat prompt.txt | muna-image-google --out outputs
 
 # 指定模型
 muna-image-google --model gemini-3-pro-image-preview "极简风茶馆 logo" --out outputs
 
-# 设置宽高比与尺寸（适用于 gemini-3-pro-image-preview）
+# 设置宽高比与尺寸
 muna-image-google "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
 
-# 指定种子（0-2147483647）
+# 固定种子
 muna-image-google "现代咖啡馆室内" --seed 1011567824 --out outputs
 
-# 仅查看请求配置（不调用 API）
+# dry-run：仅查看请求配置，不发生真实请求
 muna-image-google "现代咖啡馆室内" --seed 1011567824 --dry-run
+```
 
-# 增加超时
-muna-image-google "现代咖啡馆室内" --timeout 5m --out outputs
+## 最佳实践
 
-# 详细 HTTP 日志（API Key 自动脱敏）
-muna-image-google "现代咖啡馆室内" -v --out outputs
+### 使用 pueue 排队执行（推荐与下列场景组合）
 
-# 使用 -v 时会把请求头里的 X-Goog-Api-Key 打码显示（前 4 + ... + 后 8）
+当需要长时间跑图、批量任务或多轮重试时，建议将命令交给 `pueue` 管理。
 
-# 指定使用某个/某些 key（支持输入部分字符进行模糊匹配；可重复）
-muna-image-google "女孩自拍照片" --aspect 21:9 -k Bxj91F48 --out outputs
+```bash
+# 1) 添加任务（示例：场景 3 的批量出图）
+pueue add -- muna-image-google "一只在海边跑步的狗" --count 3 --out ./outputs/batch
 
-# 使用参考图片（可重复，最多 14 张，支持本地路径或 URL）
-muna-image-google "办公室合影，搞怪表情" -r person1.png -r person2.png -r https://example.com/person3.png --out outputs
+# 2) 查看队列与任务 ID
+pueue status
 
-# 并行生成多张（每次并发生成一张）
-muna-image-google "一只在海边跑步的狗" -n 3 --out outputs
+# 3) 查看某个任务日志（示例 ID=25）
+pueue log 25
 
-# 统计管道整体耗时
-time cat prompt.txt | muna-image-google --out outputs
+# 4) 失败后重试
+pueue restart 25
 
-# 仅统计生成命令耗时
-cat prompt.txt | time muna-image-google --out outputs
+# 5) 删除任务
+pueue remove 25
 
-# 检查所有 API Key 是否有效（并发）
+# 6) 清理已完成任务
+pueue clean
+```
+
+### 场景 1：先 dry-run，再正式生成
+
+先确认请求参数，再执行真实生成，减少无效调用。
+
+```bash
+muna-image-google "品牌 KV 海报" \
+  --aspect 16:9 \
+  --size 2K \
+  --seed 20260206 \
+  --dry-run
+```
+
+```bash
+muna-image-google "品牌 KV 海报" \
+  --aspect 16:9 \
+  --size 2K \
+  --seed 20260206 \
+  --out ./outputs/kv
+```
+
+### 场景 2：参考图生成（多人物/风格约束）
+
+通过多张参考图控制角色和风格一致性。
+
+```bash
+muna-image-google "办公室合影，搞怪表情" \
+  -r person1.png \
+  -r person2.png \
+  -r https://example.com/person3.png \
+  --aspect 21:9 \
+  --out ./outputs/team
+```
+
+### 场景 3：并发批量出图
+
+一次并发生成多张图，提高出图效率。
+
+```bash
+muna-image-google "一只在海边跑步的狗" \
+  --count 3 \
+  --out ./outputs/batch
+```
+
+## 常用参数
+
+- `--model`/`-m`：模型 ID（默认：`gemini-3-pro-image-preview`）
+- `--out`/`-o`：输出目录
+- `--aspect`/`-a`：宽高比（如 `1:1`、`16:9`）
+- `--size`：图像尺寸（`1K`、`2K`、`4K`）
+- `--seed`/`-s`：指定种子（`0-2147483647`）
+- `--count`/`-n`：生成数量（并发）
+- `--ref`/`-r`：参考图片路径或 URL（可重复，最多 14 张）
+- `--key`/`-k`：指定使用的 API Key（可重复；支持子串模糊匹配）
+- `--timeout`：总超时（默认：`5m`）
+- `--dry-run`/`-D`：仅打印请求配置，不会发生真实的请求。
+- `--verbose`/`-v`：详细日志（API Key 脱敏、长字段裁剪）
+
+## 参数详细说明
+
+### 1) 提示词输入方式
+
+```bash
+# 位置参数优先
+muna-image-google "一只在海边跑步的狗"
+
+# 无位置参数时读取 stdin
+cat prompt.txt | muna-image-google
+```
+
+说明：无参数且无 stdin 时，显示帮助并退出。
+
+### 2) 输出目录与文件名
+
+```bash
+muna-image-google "现代咖啡馆室内" --out ./outputs
+```
+
+说明：
+- `--out` 是目录，不是文件名。
+- 输出文件名格式：`YYYYMMDD` + 12 位大写字母数字 + `-seed` + 扩展名。
+
+### 3) 宽高比与尺寸
+
+```bash
+muna-image-google "海报" --aspect 9:16 --size 2K
+```
+
+说明：`--size` 默认 `4K`。
+
+### 4) 种子控制
+
+```bash
+# 固定种子（尽量复现）
+muna-image-google "海报" --seed 123456
+
+# 不指定种子（每次随机）
+muna-image-google "海报"
+```
+
+说明：相同提示词/参数/模型 + 相同种子时，模型会尽力给出一致结果，但仍可能有轻微差异。
+
+### 5) 多图并发生成
+
+```bash
+muna-image-google "商品图" --count 5 --out ./outputs/products
+```
+
+说明：
+- `--count` 会并发发起请求。
+- 任一请求失败会导致进程最终以非 0 退出码结束。
+
+### 6) 指定 API Key（模糊匹配）
+
+```bash
+muna-image-google "女孩自拍照片" -k Bxj91F48 -k AbCd --out outputs
+```
+
+说明：
+- 模糊匹配支持 key 子串。
+- 任意一个模式匹配不到 key 会直接报错。
+- 若匹配多个 key，则在匹配结果中随机选择。
+
+### 7) 参考图输入（本地与 URL）
+
+```bash
+# 本地图
+muna-image-google "办公室合影" -r person1.png -r person2.png
+
+# URL 图
+muna-image-google "办公室合影" -r https://example.com/person3.png
+```
+
+说明：最多 14 张，URL 不可访问会直接失败。
+
+### 8) dry-run（不发真实请求）
+
+```bash
+muna-image-google "快速查看请求配置" --dry-run
+```
+
+说明：用于调试最终请求参数（模型、内容、配置、执行模式），不会调用真实生成接口。
+
+### 9) 超时与日志
+
+```bash
+# 调整超时
+muna-image-google "现代咖啡馆室内" --timeout 5m
+
+# 详细日志（脱敏）
+muna-image-google "现代咖啡馆室内" -v
+```
+
+## 子命令
+
+### API Key 可用性检查
+
+```bash
+# 检查所有 key
 muna-image-google key
 
-# 列出服务端模型
+# 设置检查超时
+muna-image-google key --timeout 5s
+```
+
+输出说明：
+- key 打码为前 4 + `...` + 后 8
+- 成功显示亮绿色 `OK`
+- 失败显示亮红色 `FAIL` 并附带 `code reason message`
+
+### 模型列表与模糊查询
+
+```bash
+# 列出所有模型
 muna-image-google model
 
-# 模糊查询模型（匹配名称/显示名/描述）
+# 模糊查询（匹配名称/显示名/描述）
 muna-image-google model gemini
 
-# JSON 输出模型完整信息
+# JSON 输出
 muna-image-google model --json
 ```
-
-## 参数说明
-
-```text
---model   模型 ID（默认：gemini-3-pro-image-preview）
---out     输出目录（默认：.）
---aspect  宽高比（如 1:1、16:9）
---size    图像尺寸（1K、2K、4K，默认：4K）
---timeout 总超时（如 30s、5m，默认：5m）
---dry-run 仅打印请求配置，不会发生真实的请求。
---verbose 详细日志（API Key 脱敏、长字段裁剪）
---key     指定使用的 API Key（可重复；支持输入 key 的部分字符进行模糊匹配）
---ref     参考图片路径或 URL（可重复，最多 14 张）
---count   生成数量（默认：1）
---seed    指定种子（0-2147483647，别名 -s）
-```
-
-## 行为说明
-
-- 输出目录：`--out` 是目录，不是文件名。
-- 输出文件名：`YYYYMMDD` + 12 位大写字母数字 + `-seed` + 扩展名（按 MIME 推断，未知为 `.jpg`）。
-- 输出内容：
-  - 成功时：只输出生成文件的绝对路径。
-  - 失败且无图时（非 `-v`）：只输出 `finishMessage` 内容并以非 0 退出码结束。
-- 并发生成：`-n/--count` 会并发发起请求；**每次请求前随机选择一个 key**。
-- 指定 key：使用 `-k/--key` 传入 key 的任意子串进行模糊匹配；
-  - 任意一个模式匹配不到 key：直接报错
-  - 匹配到 1 个 key：固定使用该 key
-  - 匹配到多个 key：在匹配到的 key 中随机选择
-- 种子：用于尽量稳定复现生成结果的随机因子。指定 `--seed` 时使用该种子生成图像；未指定时本地随机生成种子。相同提示词/参数/模型 + 相同种子时，模型会尽力给出一致结果（仍可能存在轻微差异）。
-- dry-run：使用 `-D/--dry-run` 仅打印最终请求配置，不会发生真实的请求。
-- 参考图片：`-r/--ref` 最多 14 张；URL 会被下载并以 `inlineData` 发送，URL 不可访问会直接失败。
-- 多 key 分隔：逗号、分号、空白、换行均可分隔。
-- 提示词输入：有位置参数时优先生效；无位置参数时才读取 stdin。
-- 无参数且无 stdin：显示帮助信息并退出，不会发起生成请求。
-- 详细日志：`-v` 会打印请求/响应日志，API Key 自动脱敏、长字段裁剪。
-
-## key 子命令
-
-- 用法：`muna-image-google key`
-- 作用：并发检查 `MUNA_GEMINI_API_KEY` 中的所有 key 是否有效。
-- 输出格式：
-  - key 打码为前 4 + `...` + 后 8
-  - 成功：亮绿色 `OK`
-  - 失败：亮红色 `FAIL`，并输出 `code reason message`
-- 退出码：只要有一个失败则退出码非 0。
-- 超时：`muna-image-google key --timeout 5s`
-
-## model 子命令
-
-- 用法：`muna-image-google model [keyword]`
-- 作用：拉取并列出服务端模型，支持关键词模糊匹配。
-- 匹配字段：`Name`、`DisplayName`、`Description`（不区分大小写）。
-- 输出格式：
-  - 默认：`name : displayName`，下一行灰色显示描述。
-  - `--json`：输出模型完整 JSON 数组。
 
 ## 备注
 
