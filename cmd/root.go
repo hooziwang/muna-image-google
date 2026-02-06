@@ -22,8 +22,6 @@ import (
 	"google.golang.org/genai"
 )
 
-const defaultPrompt = "Create a picture of a nano banana dish in a fancy restaurant with a Gemini theme."
-
 var (
 	modelFlag   string
 	outFlag     string
@@ -65,7 +63,10 @@ var rootCmd = &cobra.Command{
 			text = strings.TrimSpace(stdinText)
 		}
 		if text == "" {
-			text = defaultPrompt
+			if err := cmd.Help(); err != nil {
+				log.Fatal(err)
+			}
+			return
 		}
 
 		apiKeys := requireMunaGeminiAPIKeys()
