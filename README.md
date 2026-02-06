@@ -66,6 +66,15 @@ cat prompt.txt | time muna-image-google --out outputs
 
 # 检查所有 API Key 是否有效（并发）
 muna-image-google key
+
+# 列出服务端模型
+muna-image-google model
+
+# 模糊查询模型（匹配名称/显示名/描述）
+muna-image-google model gemini
+
+# JSON 输出模型完整信息
+muna-image-google model --json
 ```
 
 ## 参数说明
@@ -114,6 +123,15 @@ muna-image-google key
   - 失败：亮红色 `FAIL`，并输出 `code reason message`
 - 退出码：只要有一个失败则退出码非 0。
 - 超时：`muna-image-google key --timeout 5s`
+
+## model 子命令
+
+- 用法：`muna-image-google model [keyword]`
+- 作用：拉取并列出服务端模型，支持关键词模糊匹配。
+- 匹配字段：`Name`、`DisplayName`、`Description`（不区分大小写）。
+- 输出格式：
+  - 默认：`name : displayName`，下一行灰色显示描述。
+  - `--json`：输出模型完整 JSON 数组。
 
 ## 备注
 
