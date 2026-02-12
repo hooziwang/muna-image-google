@@ -35,6 +35,180 @@ func TestSplitAPIKeys_Empty(t *testing.T) {
 	}
 }
 
+func TestExtractMunaGeminiAPIKeysFromDotEnv(t *testing.T) {
+	t.Run("line based format with comments", func(t *testing.T) {
+		content := strings.Join([]string{
+			"# account-a",
+			"AIzaAAAAAAAAAAAAAAAAAAAAAAA1",
+			"AIzaBBBBBBBBBBBBBBBBBBBBBBB2",
+			"",
+			"# account-b",
+			"AIzaCCCCCCCCCCCCCCCCCCCCCCC3",
+		}, "\n")
+
+		got, suspicious := extractMunaGeminiAPIKeysFromDotEnv(content)
+		want := []string{
+			"AIzaAAAAAAAAAAAAAAAAAAAAAAA1",
+			"AIzaBBBBBBBBBBBBBBBBBBBBBBB2",
+			"AIzaCCCCCCCCCCCCCCCCCCCCCCC3",
+		}
+		if !reflect.DeepEqual(splitAPIKeys(got), want) {
+			t.Fatalf("extractMunaGeminiAPIKeysFromDotEnv() = %#v, want %#v", splitAPIKeys(got), want)
+		}
+		if len(suspicious) != 0 {
+			t.Fatalf("extractMunaGeminiAPIKeysFromDotEnv() suspicious = %#v, want empty", suspicious)
+		}
+	})
+
+	t.Run("env assignment format should be supported", func(t *testing.T) {
+		content := strings.Join([]string{
+			"OTHER_KEY=abc",
+			"MUNA_GEMINI_API_KEY=\"AIzaAAAAAAAAAAAAAAAAAAAAAAA1,AIzaBBBBBBBBBBBBBBBBBBBBBBB2\"",
+			"export MUNA_GEMINI_API_KEY='AIzaCCCCCCCCCCCCCCCCCCCCCCC3 AIzaDDDDDDDDDDDDDDDDDDDDDDD4'",
+			"MUNA_GEMINI_API_KEY=AIzaEEEEEEEEEEEEEEEEEEEEEEE5;AIzaFFFFFFFFFFFFFFFFFFFFFFF6 # with comment",
+		}, "\n")
+
+		got, suspicious := extractMunaGeminiAPIKeysFromDotEnv(content)
+		want := []string{
+			"AIzaAAAAAAAAAAAAAAAAAAAAAAA1",
+			"AIzaBBBBBBBBBBBBBBBBBBBBBBB2",
+			"AIzaCCCCCCCCCCCCCCCCCCCCCCC3",
+			"AIzaDDDDDDDDDDDDDDDDDDDDDDD4",
+			"AIzaEEEEEEEEEEEEEEEEEEEEEEE5",
+			"AIzaFFFFFFFFFFFFFFFFFFFFFFF6",
+		}
+		if !reflect.DeepEqual(splitAPIKeys(got), want) {
+			t.Fatalf("extractMunaGeminiAPIKeysFromDotEnv() = %#v, want %#v", splitAPIKeys(got), want)
+		}
+		if len(suspicious) != 0 {
+			t.Fatalf("extractMunaGeminiAPIKeysFromDotEnv() suspicious = %#v, want empty", suspicious)
+		}
+	})
+
+	t.Run("invalid lines should be marked suspicious", func(t *testing.T) {
+		content := strings.Join([]string{
+			"# keep",
+			"not-a-key",
+			"AIzaVALIDKEY123456789012345",
+			"value with spaces",
+			"MUNA_GEMINI_API_KEY=BAD1,BAD2",
+		}, "\n")
+
+		got, suspicious := extractMunaGeminiAPIKeysFromDotEnv(content)
+		want := []string{"AIzaVALIDKEY123456789012345"}
+		if !reflect.DeepEqual(splitAPIKeys(got), want) {
+			t.Fatalf("extractMunaGeminiAPIKeysFromDotEnv() = %#v, want %#v", splitAPIKeys(got), want)
+		}
+		if !reflect.DeepEqual(suspicious, []int{2, 4, 5}) {
+			t.Fatalf("extractMunaGeminiAPIKeysFromDotEnv() suspicious = %#v, want %#v", suspicious, []int{2, 4, 5})
+		}
+	})
+}
+
+func TestLooksLikeGeminiAPIKeyAndFormatLineNumbers(t *testing.T) {
+	if !looksLikeGeminiAPIKey("AIzaVALIDKEY123456789012345") {
+		t.Fatal("looksLikeGeminiAPIKey() expected true")
+	}
+	if looksLikeGeminiAPIKey("short") {
+		t.Fatal("looksLikeGeminiAPIKey() expected false for short value")
+	}
+	if looksLikeGeminiAPIKey("AIza INVALID KEY") {
+		t.Fatal("looksLikeGeminiAPIKey() expected false for spaces")
+	}
+	got := formatLineNumbers([]int{2, 4, 9})
+	if got != "2,4,9" {
+		t.Fatalf("formatLineNumbers() = %q, want %q", got, "2,4,9")
+	}
+}
+
+func TestLoadMunaGeminiAPIKeyRaw(t *testing.T) {
+	t.Run("env should have higher priority than dot env", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("MUNA_GEMINI_API_KEY", "ENV_KEY_1,ENV_KEY_2")
+
+		dir := filepath.Join(home, ".muna-image-google")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("os.MkdirAll() error: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("FILE_KEY_1\nFILE_KEY_2\n"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile() error: %v", err)
+		}
+
+		got, err := loadMunaGeminiAPIKeyRaw()
+		if err != nil {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() unexpected error: %v", err)
+		}
+		want := []string{"ENV_KEY_1", "ENV_KEY_2"}
+		if !reflect.DeepEqual(splitAPIKeys(got), want) {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() = %#v, want %#v", splitAPIKeys(got), want)
+		}
+	})
+
+	t.Run("dot env should be used when env is empty", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("MUNA_GEMINI_API_KEY", "")
+
+		dir := filepath.Join(home, ".muna-image-google")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("os.MkdirAll() error: %v", err)
+		}
+		content := strings.Join([]string{
+			"# account-a",
+			"AIzaFILEKEY123456789012345",
+			"AIzaFILEKEY234567890123456",
+		}, "\n")
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(content), 0o644); err != nil {
+			t.Fatalf("os.WriteFile() error: %v", err)
+		}
+
+		got, err := loadMunaGeminiAPIKeyRaw()
+		if err != nil {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() unexpected error: %v", err)
+		}
+		want := []string{"AIzaFILEKEY123456789012345", "AIzaFILEKEY234567890123456"}
+		if !reflect.DeepEqual(splitAPIKeys(got), want) {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() = %#v, want %#v", splitAPIKeys(got), want)
+		}
+	})
+
+	t.Run("missing dot env should return empty", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("MUNA_GEMINI_API_KEY", "")
+
+		got, err := loadMunaGeminiAPIKeyRaw()
+		if err != nil {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() = %q, want empty", got)
+		}
+	})
+}
+
+func TestCommandLongHelpIncludesKeySource(t *testing.T) {
+	if !strings.Contains(rootCmd.Long, "MUNA_GEMINI_API_KEY") {
+		t.Fatal("rootCmd.Long missing MUNA_GEMINI_API_KEY")
+	}
+	if !strings.Contains(rootCmd.Long, "~/.muna-image-google/.env") {
+		t.Fatal("rootCmd.Long missing ~/.muna-image-google/.env")
+	}
+	if !strings.Contains(modelCmd.Long, "MUNA_GEMINI_API_KEY") {
+		t.Fatal("modelCmd.Long missing MUNA_GEMINI_API_KEY")
+	}
+	if !strings.Contains(modelCmd.Long, "~/.muna-image-google/.env") {
+		t.Fatal("modelCmd.Long missing ~/.muna-image-google/.env")
+	}
+	if !strings.Contains(keyCmd.Long, "MUNA_GEMINI_API_KEY") {
+		t.Fatal("keyCmd.Long missing MUNA_GEMINI_API_KEY")
+	}
+	if !strings.Contains(keyCmd.Long, "~/.muna-image-google/.env") {
+		t.Fatal("keyCmd.Long missing ~/.muna-image-google/.env")
+	}
+}
+
 func TestResolveSeed_Specified(t *testing.T) {
 	got, err := resolveSeed(true, 123)
 	if err != nil {

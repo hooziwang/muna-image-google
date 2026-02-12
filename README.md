@@ -43,6 +43,7 @@ go test -count=1 -cover ./cmd
   - 支持配置多个 key
   - 支持分隔符：逗号、分号、空白、换行
   - 运行时会随机选取 key（`--key` 过滤后在结果集里随机）
+  - 当环境变量未设置时，会回退读取 `~/.muna-image-google/.env`
 
 示例：
 
@@ -50,6 +51,22 @@ go test -count=1 -cover ./cmd
 export MUNA_GEMINI_API_KEY="key_1
 key_2
 key_3"
+```
+
+`~/.muna-image-google/.env` 支持两种写法：
+
+1) 标准 `KEY=VALUE`：
+
+```bash
+MUNA_GEMINI_API_KEY="KEY1,KEY2"
+```
+
+2) 每行一个 key（可用 `#` 注释分组）：
+
+```bash
+# account-a
+KEY1
+KEY2
 ```
 
 ## 基本用法

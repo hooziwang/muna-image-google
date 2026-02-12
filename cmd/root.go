@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +46,11 @@ var errNoImage = errors.New("未返回图像数据")
 var rootCmd = &cobra.Command{
 	Use:   "muna-image-google [prompt]",
 	Short: "使用原生 Gemini API 生成图像",
-	Long:  "使用原生 Gemini API 生成图像。",
+	Long: "使用原生 Gemini API 生成图像。\n\n" +
+		"Key 来源：\n" +
+		"  1) 优先读取环境变量 MUNA_GEMINI_API_KEY\n" +
+		"  2) 当环境变量未设置时，回退读取 ~/.muna-image-google/.env\n" +
+		"     支持 MUNA_GEMINI_API_KEY=... 或每行一个 key（可用 # 注释）",
 	Example: "  # 使用位置参数\n" +
 		"  muna-image-google \"一只在海边跑步的狗\"\n\n" +
 		"  # 从标准输入读取提示词\n" +
@@ -424,12 +429,136 @@ func extensionFromMIME(mimeType string) string {
 }
 
 func requireMunaGeminiAPIKeys() []string {
-	raw := strings.TrimSpace(os.Getenv("MUNA_GEMINI_API_KEY"))
+	raw, err := loadMunaGeminiAPIKeyRaw()
+	if err != nil {
+		log.Fatal(err)
+	}
 	keys := splitAPIKeys(raw)
 	if len(keys) == 0 {
-		log.Fatal("缺少环境变量 MUNA_GEMINI_API_KEY")
+		log.Fatal("缺少环境变量 MUNA_GEMINI_API_KEY（或 ~/.muna-image-google/.env）")
 	}
 	return keys
+}
+
+func loadMunaGeminiAPIKeyRaw() (string, error) {
+	if raw := strings.TrimSpace(os.Getenv("MUNA_GEMINI_API_KEY")); raw != "" {
+		return raw, nil
+	}
+	raw, err := readMunaGeminiAPIKeyFromDotEnv()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(raw), nil
+}
+
+func readMunaGeminiAPIKeyFromDotEnv() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", nil
+	}
+
+	dotEnvPath := filepath.Join(home, ".muna-image-google", ".env")
+	data, err := os.ReadFile(dotEnvPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("读取 %s 失败: %w", dotEnvPath, err)
+	}
+
+	raw, suspiciousLines := extractMunaGeminiAPIKeysFromDotEnv(string(data))
+	if verboseFlag && len(suspiciousLines) > 0 {
+		log.Printf("warning: 在 %s 中忽略了可疑行: %s", dotEnvPath, formatLineNumbers(suspiciousLines))
+	}
+	return raw, nil
+}
+
+func extractMunaGeminiAPIKeysFromDotEnv(content string) (string, []int) {
+	keys := make([]string, 0)
+	suspicious := make(map[int]struct{})
+
+	for idx, line := range strings.Split(content, "\n") {
+		lineNo := idx + 1
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "export ") {
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "export "))
+		}
+
+		eqIndex := strings.Index(trimmed, "=")
+		if eqIndex >= 0 {
+			k := strings.TrimSpace(trimmed[:eqIndex])
+			if k != "MUNA_GEMINI_API_KEY" {
+				continue
+			}
+			v := parseDotEnvRawValue(trimmed[eqIndex+1:])
+			parsed := splitAPIKeys(v)
+			for _, key := range parsed {
+				if !looksLikeGeminiAPIKey(key) {
+					suspicious[lineNo] = struct{}{}
+					continue
+				}
+				keys = append(keys, key)
+			}
+			continue
+		}
+
+		v := parseDotEnvRawValue(trimmed)
+		if v == "" {
+			continue
+		}
+		if strings.ContainsAny(v, " \t") {
+			suspicious[lineNo] = struct{}{}
+			continue
+		}
+		if !looksLikeGeminiAPIKey(v) {
+			suspicious[lineNo] = struct{}{}
+			continue
+		}
+		keys = append(keys, v)
+	}
+
+	suspiciousLines := make([]int, 0, len(suspicious))
+	for lineNo := range suspicious {
+		suspiciousLines = append(suspiciousLines, lineNo)
+	}
+	sort.Ints(suspiciousLines)
+
+	return strings.Join(keys, "\n"), suspiciousLines
+}
+
+func parseDotEnvRawValue(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if len(trimmed) >= 2 {
+		if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') || (trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
+			return strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		}
+	}
+	if idx := strings.Index(trimmed, " #"); idx >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:idx])
+	}
+	return trimmed
+}
+
+func looksLikeGeminiAPIKey(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) < 20 {
+		return false
+	}
+	if strings.ContainsAny(trimmed, " \t\n\r") {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "AIza")
+}
+
+func formatLineNumbers(lines []int) string {
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		parts = append(parts, fmt.Sprintf("%d", line))
+	}
+	return strings.Join(parts, ",")
 }
 
 func splitAPIKeys(raw string) []string {

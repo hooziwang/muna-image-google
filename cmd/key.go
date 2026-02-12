@@ -34,7 +34,8 @@ type apiErrorResponse struct {
 var keyCmd = &cobra.Command{
 	Use:   "key",
 	Short: "检查所有 API Key 是否有效",
-	Long:  "检查所有 API Key 是否有效。",
+	Long: "检查所有 API Key 是否有效。\n" +
+		"Key 来源：优先读取环境变量 MUNA_GEMINI_API_KEY；未设置时回退 ~/.muna-image-google/.env。",
 	Run: func(_ *cobra.Command, _ []string) {
 		log.SetFlags(0)
 		keys := requireMunaGeminiAPIKeys()

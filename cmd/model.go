@@ -17,8 +17,9 @@ var modelJSONFlag bool
 var modelCmd = &cobra.Command{
 	Use:   "model [keyword]",
 	Short: "列出服务端模型",
-	Long:  "列出服务端模型，支持关键词模糊查询。",
-	Args:  cobra.RangeArgs(0, 1),
+	Long: "列出服务端模型，支持关键词模糊查询。\n" +
+		"Key 来源：优先读取环境变量 MUNA_GEMINI_API_KEY；未设置时回退 ~/.muna-image-google/.env。",
+	Args: cobra.RangeArgs(0, 1),
 	Run: func(_ *cobra.Command, args []string) {
 		log.SetFlags(0)
 		keys := requireMunaGeminiAPIKeys()
