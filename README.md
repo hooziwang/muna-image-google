@@ -2,7 +2,21 @@
 
 运用 Gemini API 生成图像的命令行工具。
 
-## 安装与构建
+## 安装
+
+### Homebrew（macOS）
+
+```bash
+brew tap hooziwang/tap && brew install muna-image-google
+```
+
+### Scoop（Windows）
+
+```powershell
+scoop bucket add hooziwang https://github.com/hooziwang/scoop-bucket; scoop install muna-image-google
+```
+
+## 本地构建
 
 ```bash
 # 编译、测试并安装到 GOPATH/bin
@@ -310,6 +324,12 @@ muna-image-google model --json
   - 自动创建或更新对应的 GitHub Release
   - 自动上传各平台压缩包产物（Windows 为 `.zip`，其他平台为 `.tar.gz`）
   - 自动生成并上传 `checksums.txt`（SHA256）
+  - 自动更新 Homebrew Formula：`hooziwang/homebrew-tap`
+  - 自动更新 Scoop manifest：`hooziwang/scoop-bucket`
+
+- 发布前需在仓库 `Settings -> Secrets and variables -> Actions` 配置：
+  - `HOMEBREW_TAP_GITHUB_TOKEN`：可写 `hooziwang/homebrew-tap`
+  - `SCOOP_BUCKET_GITHUB_TOKEN`：可写 `hooziwang/scoop-bucket`
 
 示例：
 

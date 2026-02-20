@@ -39,5 +39,37 @@ changelog:
   disable: true
 
 release:
+  github:
+    owner: hooziwang
+    name: muna-image-google
   name_template: "{{ .Tag }}"
   replace_existing_artifacts: true
+  prerelease: auto
+
+brews:
+  - name: muna-image-google
+    repository:
+      owner: hooziwang
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/hooziwang/muna-image-google"
+    description: "使用 Gemini API 生成图像的命令行工具"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    test: |
+      system "#{bin}/muna-image-google", "--help"
+
+scoops:
+  - name: muna-image-google
+    repository:
+      owner: hooziwang
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    directory: bucket
+    homepage: "https://github.com/hooziwang/muna-image-google"
+    description: "使用 Gemini API 生成图像的命令行工具"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
