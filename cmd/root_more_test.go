@@ -122,9 +122,34 @@ func TestLooksLikeGeminiAPIKeyAndFormatLineNumbers(t *testing.T) {
 }
 
 func TestLoadMunaGeminiAPIKeyRaw(t *testing.T) {
+	t.Run("new env should have highest priority", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("MUNA_IMAGE_GOOGLE_API_KEY", "sk-new-1,sk-new-2")
+		t.Setenv("MUNA_GEMINI_API_KEY", "old-key-1,old-key-2")
+
+		dir := filepath.Join(home, ".muna-image-google")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("os.MkdirAll() error: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("AIzaFILEKEY123456789012345\n"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile() error: %v", err)
+		}
+
+		got, err := loadMunaGeminiAPIKeyRaw()
+		if err != nil {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() unexpected error: %v", err)
+		}
+		want := []string{"sk-new-1", "sk-new-2"}
+		if !reflect.DeepEqual(splitAPIKeys(got), want) {
+			t.Fatalf("loadMunaGeminiAPIKeyRaw() = %#v, want %#v", splitAPIKeys(got), want)
+		}
+	})
+
 	t.Run("env should have higher priority than dot env", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
+		t.Setenv("MUNA_IMAGE_GOOGLE_API_KEY", "")
 		t.Setenv("MUNA_GEMINI_API_KEY", "ENV_KEY_1,ENV_KEY_2")
 
 		dir := filepath.Join(home, ".muna-image-google")
@@ -148,6 +173,7 @@ func TestLoadMunaGeminiAPIKeyRaw(t *testing.T) {
 	t.Run("dot env should be used when env is empty", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
+		t.Setenv("MUNA_IMAGE_GOOGLE_API_KEY", "")
 		t.Setenv("MUNA_GEMINI_API_KEY", "")
 
 		dir := filepath.Join(home, ".muna-image-google")
@@ -176,6 +202,7 @@ func TestLoadMunaGeminiAPIKeyRaw(t *testing.T) {
 	t.Run("missing dot env should return empty", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
+		t.Setenv("MUNA_IMAGE_GOOGLE_API_KEY", "")
 		t.Setenv("MUNA_GEMINI_API_KEY", "")
 
 		got, err := loadMunaGeminiAPIKeyRaw()
@@ -189,17 +216,44 @@ func TestLoadMunaGeminiAPIKeyRaw(t *testing.T) {
 }
 
 func TestCommandLongHelpIncludesKeySource(t *testing.T) {
+	if !strings.Contains(rootCmd.Long, "MUNA_IMAGE_GOOGLE_BASE_URL") {
+		t.Fatal("rootCmd.Long missing MUNA_IMAGE_GOOGLE_BASE_URL")
+	}
+	if !strings.Contains(rootCmd.Long, "MUNA_IMAGE_GOOGLE_MODEL") {
+		t.Fatal("rootCmd.Long missing MUNA_IMAGE_GOOGLE_MODEL")
+	}
+	if !strings.Contains(rootCmd.Long, "MUNA_IMAGE_GOOGLE_API_KEY") {
+		t.Fatal("rootCmd.Long missing MUNA_IMAGE_GOOGLE_API_KEY")
+	}
 	if !strings.Contains(rootCmd.Long, "MUNA_GEMINI_API_KEY") {
 		t.Fatal("rootCmd.Long missing MUNA_GEMINI_API_KEY")
 	}
 	if !strings.Contains(rootCmd.Long, "~/.muna-image-google/.env") {
 		t.Fatal("rootCmd.Long missing ~/.muna-image-google/.env")
 	}
+	if !strings.Contains(modelCmd.Long, "MUNA_IMAGE_GOOGLE_BASE_URL") {
+		t.Fatal("modelCmd.Long missing MUNA_IMAGE_GOOGLE_BASE_URL")
+	}
+	if !strings.Contains(modelCmd.Long, "MUNA_IMAGE_GOOGLE_API_KEY") {
+		t.Fatal("modelCmd.Long missing MUNA_IMAGE_GOOGLE_API_KEY")
+	}
+	if !strings.Contains(modelCmd.Long, "仅支持 Google 官方默认地址") {
+		t.Fatal("modelCmd.Long missing official base url restriction")
+	}
 	if !strings.Contains(modelCmd.Long, "MUNA_GEMINI_API_KEY") {
 		t.Fatal("modelCmd.Long missing MUNA_GEMINI_API_KEY")
 	}
 	if !strings.Contains(modelCmd.Long, "~/.muna-image-google/.env") {
 		t.Fatal("modelCmd.Long missing ~/.muna-image-google/.env")
+	}
+	if !strings.Contains(keyCmd.Long, "MUNA_IMAGE_GOOGLE_BASE_URL") {
+		t.Fatal("keyCmd.Long missing MUNA_IMAGE_GOOGLE_BASE_URL")
+	}
+	if !strings.Contains(keyCmd.Long, "MUNA_IMAGE_GOOGLE_API_KEY") {
+		t.Fatal("keyCmd.Long missing MUNA_IMAGE_GOOGLE_API_KEY")
+	}
+	if !strings.Contains(keyCmd.Long, "仅支持 Google 官方默认地址") {
+		t.Fatal("keyCmd.Long missing official base url restriction")
 	}
 	if !strings.Contains(keyCmd.Long, "MUNA_GEMINI_API_KEY") {
 		t.Fatal("keyCmd.Long missing MUNA_GEMINI_API_KEY")
@@ -307,7 +361,7 @@ func TestBuildDryRunSnapshot(t *testing.T) {
 	defer func() { modelFlag = originalModel }()
 
 	cfg := &genai.GenerateContentConfig{SafetySettings: defaultSafetySettings()}
-	snapshot, err := buildDryRunSnapshot("hello", nil, cfg, false, 0, 3)
+	snapshot, err := buildDryRunSnapshot("test-model", "hello", nil, cfg, false, 0, 3)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -584,11 +638,68 @@ func TestPickRandomKey(t *testing.T) {
 	}
 }
 
-func TestDisableLocalGeminiBaseURL(t *testing.T) {
-	t.Setenv("GOOGLE_GEMINI_BASE_URL", "http://127.0.0.1:9999")
-	disableLocalGeminiBaseURL()
-	if got := os.Getenv("GOOGLE_GEMINI_BASE_URL"); got != "" {
-		t.Fatalf("expected GOOGLE_GEMINI_BASE_URL unset, got %q", got)
+func TestResolveBaseURLValue(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", " https://proxy.example.com/ ")
+
+	if got := resolveBaseURLValue(); got != "https://proxy.example.com" {
+		t.Fatalf("unexpected base url: %q", got)
+	}
+
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "")
+	if got := resolveBaseURLValue(); got != "" {
+		t.Fatalf("expected empty base url, got %q", got)
+	}
+}
+
+func TestValidateOfficialBaseURLForMetaCommands_AllowsUnset(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "")
+
+	if err := validateOfficialBaseURLForMetaCommands(); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestValidateOfficialBaseURLForMetaCommands_AllowsOfficialURL(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", " https://generativelanguage.googleapis.com/ ")
+
+	if err := validateOfficialBaseURLForMetaCommands(); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestValidateOfficialBaseURLForMetaCommands_RejectsCustomURL(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "https://grsai.dakka.com.cn")
+
+	err := validateOfficialBaseURLForMetaCommands()
+	if err == nil {
+		t.Fatal("expected error for custom base url")
+	}
+	if err.Error() != "仅在默认配置下可用。" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestModelCommand_RejectsCustomBaseURL(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "https://grsai.dakka.com.cn")
+
+	err := runModelCommand(modelCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for custom base url")
+	}
+	if err.Error() != "仅在默认配置下可用。" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestKeyCommand_RejectsCustomBaseURL(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "https://grsai.dakka.com.cn")
+
+	err := runKeyCommand(keyCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for custom base url")
+	}
+	if err.Error() != "仅在默认配置下可用。" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -954,6 +1065,32 @@ func TestRootCmdDryRun_WithStdinPrompt(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "prompt-from-stdin") {
 		t.Fatalf("expected prompt text in output, got %s", stdout)
+	}
+}
+
+func TestRootCmdDryRun_UsesEnvModelWhenFlagUnset(t *testing.T) {
+	t.Setenv("MUNA_GEMINI_API_KEY", "k1")
+	t.Setenv("MUNA_IMAGE_GOOGLE_MODEL", "nano-banana-pro")
+
+	stdout, stderr, err := runRootCommandForTest(t, []string{"--dry-run", "hello"}, "")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if strings.TrimSpace(stderr) != "" {
+		t.Fatalf("expected empty stderr, got %s", stderr)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("invalid dry-run json output: %v", err)
+	}
+
+	request, ok := payload["request"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected request map")
+	}
+	if request["model"] != "nano-banana-pro" {
+		t.Fatalf("unexpected model: %v", request["model"])
 	}
 }
 

@@ -53,13 +53,25 @@ go test -count=1 -cover ./cmd
 
 ## 环境变量
 
-- `MUNA_GEMINI_API_KEY`：Gemini API Key，必填。
+- 配置优先级：命令行参数 > 环境变量 > 默认值。
+- `MUNA_IMAGE_GOOGLE_BASE_URL`：可选，自定义 Gemini 网关地址。
+- `MUNA_IMAGE_GOOGLE_MODEL`：可选，默认模型；仅在未显式传入 `--model` 时生效。
+- `MUNA_IMAGE_GOOGLE_API_KEY`：可选，API Key；未设置时会继续回退读取 `MUNA_GEMINI_API_KEY` 和 `~/.muna-image-google/.env`。
+- `MUNA_GEMINI_API_KEY`：兼容现有逻辑的 API Key 配置，支持多个 key。
   - 支持配置多个 key
   - 支持分隔符：逗号、分号、空白、换行
   - 运行时会随机选取 key（`--key` 过滤后在结果集里随机）
-  - 当环境变量未设置时，会回退读取 `~/.muna-image-google/.env`
+  - 当 `MUNA_IMAGE_GOOGLE_API_KEY` 和 `MUNA_GEMINI_API_KEY` 都未设置时，会回退读取 `~/.muna-image-google/.env`
 
 示例：
+
+```bash
+export MUNA_IMAGE_GOOGLE_BASE_URL="https://grsai.dakka.com.cn"
+export MUNA_IMAGE_GOOGLE_MODEL="nano-banana-pro"
+export MUNA_IMAGE_GOOGLE_API_KEY="sk-xxxx"
+```
+
+兼容旧 key 环境变量的示例：
 
 ```bash
 export MUNA_GEMINI_API_KEY="key_1
@@ -96,7 +108,7 @@ muna-image-google "一个小机器人在画夕阳" --out outputs
 echo "清晨的未来城市天际线" | muna-image-google --out outputs
 
 # 指定模型
-muna-image-google --model gemini-3-pro-image-preview "极简风茶馆 logo" --out outputs
+muna-image-google --model nano-banana-pro "极简风茶馆 logo" --out outputs
 
 # 设置宽高比与尺寸
 muna-image-google "现代咖啡馆室内" --aspect 16:9 --size 2K --out outputs
@@ -179,7 +191,7 @@ muna-image-google "一只在海边跑步的狗" \
 
 ## 常用参数
 
-- `--model`/`-m`：模型 ID（默认：`gemini-3-pro-image-preview`）
+- `--model`/`-m`：模型 ID（默认：`gemini-3-pro-image-preview`；未显式传参时可被 `MUNA_IMAGE_GOOGLE_MODEL` 覆盖）
 - `--out`/`-o`：输出目录
 - `--aspect`/`-a`：宽高比（如 `1:1`、`16:9`）
 - `--size`：图像尺寸（`1K`、`2K`、`4K`）
@@ -298,6 +310,10 @@ muna-image-google key
 muna-image-google key --timeout 5s
 ```
 
+说明：
+- `key` 子命令仅支持 Google 官方默认地址 `https://generativelanguage.googleapis.com`
+- 当 `MUNA_IMAGE_GOOGLE_BASE_URL` 被设置为非官方地址时，会输出说明并直接退出
+
 输出说明：
 - key 打码为前 4 + `...` + 后 8
 - 成功显示亮绿色 `OK`
@@ -315,6 +331,10 @@ muna-image-google model gemini
 # JSON 输出
 muna-image-google model --json
 ```
+
+说明：
+- `model` 子命令仅支持 Google 官方默认地址 `https://generativelanguage.googleapis.com`
+- 当 `MUNA_IMAGE_GOOGLE_BASE_URL` 被设置为非官方地址时，会输出说明并直接退出
 
 ## 发布（Release）
 
@@ -340,4 +360,4 @@ git push origin v0.1.1
 
 ## 备注
 
-- 默认模型为 `gemini-3-pro-image-preview`。
+- 默认模型为 `gemini-3-pro-image-preview`；若设置 `MUNA_IMAGE_GOOGLE_MODEL`，则未显式传入 `--model` 时会使用环境变量值。

@@ -38,8 +38,15 @@ var (
 	seedFlag    int64
 )
 
+const defaultModel = "gemini-3-pro-image-preview"
 const maxCaptureBytes = 2 << 20
 const maxSeedValue = int64(2147483647)
+const envBaseURL = "MUNA_IMAGE_GOOGLE_BASE_URL"
+const envModel = "MUNA_IMAGE_GOOGLE_MODEL"
+const envAPIKey = "MUNA_IMAGE_GOOGLE_API_KEY"
+const legacyAPIKeyEnv = "MUNA_GEMINI_API_KEY"
+const defaultGeminiBaseURL = "https://generativelanguage.googleapis.com"
+const geminiAPIVersion = "v1beta"
 
 var errNoImage = errors.New("未返回图像数据")
 
@@ -47,9 +54,14 @@ var rootCmd = &cobra.Command{
 	Use:   "muna-image-google [prompt]",
 	Short: "使用原生 Gemini API 生成图像",
 	Long: "使用原生 Gemini API 生成图像。\n\n" +
-		"Key 来源：\n" +
-		"  1) 优先读取环境变量 MUNA_GEMINI_API_KEY\n" +
-		"  2) 当环境变量未设置时，回退读取 ~/.muna-image-google/.env\n" +
+		"配置优先级：命令行参数 > 环境变量 > 默认值。\n" +
+		"  - Base URL: MUNA_IMAGE_GOOGLE_BASE_URL\n" +
+		"  - 默认模型: MUNA_IMAGE_GOOGLE_MODEL\n" +
+		"  - API Key: MUNA_IMAGE_GOOGLE_API_KEY\n\n" +
+		"Key 回退来源：\n" +
+		"  1) 优先读取环境变量 MUNA_IMAGE_GOOGLE_API_KEY\n" +
+		"  2) 未设置时读取环境变量 MUNA_GEMINI_API_KEY\n" +
+		"  3) 当环境变量仍未设置时，回退读取 ~/.muna-image-google/.env\n" +
 		"     支持 MUNA_GEMINI_API_KEY=... 或每行一个 key（可用 # 注释）",
 	Example: "  # 使用位置参数\n" +
 		"  muna-image-google \"一只在海边跑步的狗\"\n\n" +
@@ -78,13 +90,13 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
+		resolvedModel := resolveModelValue(modelFlag, cmd.Flags().Changed("model"))
 		apiKeys := requireMunaGeminiAPIKeys()
 		filteredKeys, err := filterAPIKeys(apiKeys, keyPatterns)
 		if err != nil {
 			log.Fatal(err)
 		}
 		apiKeys = filteredKeys
-		disableLocalGeminiBaseURL()
 
 		baseCfg := &genai.GenerateContentConfig{
 			SafetySettings: defaultSafetySettings(),
@@ -106,7 +118,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		if dryRunFlag {
-			printDryRun(text, refPaths, baseCfg, seedSpecified, seedFlag, countFlag)
+			printDryRun(resolvedModel, text, refPaths, baseCfg, seedSpecified, seedFlag, countFlag)
 			return
 		}
 
@@ -127,7 +139,7 @@ var rootCmd = &cobra.Command{
 				}
 				cfg := *baseCfg
 				cfg.Seed = &seed
-				absPath, finishMessage, err := generateOnce(ctx, apiKey, text, refPaths, &cfg, seed)
+				absPath, finishMessage, err := generateOnce(ctx, apiKey, resolvedModel, text, refPaths, &cfg, seed)
 				if err != nil {
 					if errors.Is(err, errNoImage) {
 						if !verboseFlag {
@@ -170,7 +182,7 @@ func Execute() {
 
 func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
-	rootCmd.Flags().StringVarP(&modelFlag, "model", "m", "gemini-3-pro-image-preview", "模型 ID")
+	rootCmd.Flags().StringVarP(&modelFlag, "model", "m", defaultModel, "模型 ID")
 	rootCmd.Flags().StringVarP(&outFlag, "out", "o", ".", "输出目录")
 	rootCmd.Flags().StringVarP(&aspectFlag, "aspect", "a", "", "宽高比（1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9）")
 	rootCmd.Flags().StringVar(&sizeFlag, "size", "4K", "图像尺寸（1K, 2K, 4K，适用于 gemini-3-pro-image-preview）")
@@ -261,8 +273,8 @@ func extractFinishMessage(resp *genai.GenerateContentResponse, raw []byte) strin
 	return ""
 }
 
-func printDryRun(text string, refs []string, cfg *genai.GenerateContentConfig, seedSpecified bool, seedValue int64, count int) {
-	snapshot, err := buildDryRunSnapshot(text, refs, cfg, seedSpecified, seedValue, count)
+func printDryRun(model, text string, refs []string, cfg *genai.GenerateContentConfig, seedSpecified bool, seedValue int64, count int) {
+	snapshot, err := buildDryRunSnapshot(model, text, refs, cfg, seedSpecified, seedValue, count)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -277,7 +289,7 @@ func printDryRun(text string, refs []string, cfg *genai.GenerateContentConfig, s
 	fmt.Println(string(data))
 }
 
-func buildDryRunSnapshot(text string, refs []string, cfg *genai.GenerateContentConfig, seedSpecified bool, seedValue int64, count int) (map[string]interface{}, error) {
+func buildDryRunSnapshot(model, text string, refs []string, cfg *genai.GenerateContentConfig, seedSpecified bool, seedValue int64, count int) (map[string]interface{}, error) {
 	parts, err := buildParts(text, refs)
 	if err != nil {
 		return nil, err
@@ -303,7 +315,7 @@ func buildDryRunSnapshot(text string, refs []string, cfg *genai.GenerateContentC
 	}
 
 	request := map[string]interface{}{
-		"model": modelFlag,
+		"model": model,
 		"contents": []map[string]interface{}{
 			{"parts": partSnapshots},
 		},
@@ -435,13 +447,16 @@ func requireMunaGeminiAPIKeys() []string {
 	}
 	keys := splitAPIKeys(raw)
 	if len(keys) == 0 {
-		log.Fatal("缺少环境变量 MUNA_GEMINI_API_KEY（或 ~/.muna-image-google/.env）")
+		log.Fatal("缺少环境变量 MUNA_IMAGE_GOOGLE_API_KEY、MUNA_GEMINI_API_KEY（或 ~/.muna-image-google/.env）")
 	}
 	return keys
 }
 
 func loadMunaGeminiAPIKeyRaw() (string, error) {
-	if raw := strings.TrimSpace(os.Getenv("MUNA_GEMINI_API_KEY")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv(envAPIKey)); raw != "" {
+		return raw, nil
+	}
+	if raw := strings.TrimSpace(os.Getenv(legacyAPIKeyEnv)); raw != "" {
 		return raw, nil
 	}
 	raw, err := readMunaGeminiAPIKeyFromDotEnv()
@@ -626,10 +641,51 @@ func pickRandomKey(keys []string) string {
 	return keys[n.Int64()]
 }
 
-func disableLocalGeminiBaseURL() {
-	if strings.TrimSpace(os.Getenv("GOOGLE_GEMINI_BASE_URL")) != "" {
-		_ = os.Unsetenv("GOOGLE_GEMINI_BASE_URL")
+func resolveModelValue(flagValue string, flagChanged bool) string {
+	if flagChanged {
+		return strings.TrimSpace(flagValue)
 	}
+	if envValue := strings.TrimSpace(os.Getenv(envModel)); envValue != "" {
+		return envValue
+	}
+	if trimmed := strings.TrimSpace(flagValue); trimmed != "" {
+		return trimmed
+	}
+	return defaultModel
+}
+
+func resolveBaseURLValue() string {
+	return normalizeBaseURL(os.Getenv(envBaseURL))
+}
+
+func normalizeBaseURL(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.TrimRight(trimmed, "/")
+}
+
+func validateOfficialBaseURLForMetaCommands() error {
+	baseURL := resolveBaseURLValue()
+	if baseURL == "" || baseURL == defaultGeminiBaseURL {
+		return nil
+	}
+	return fmt.Errorf("仅在默认配置下可用。")
+}
+
+func newGenAIClient(ctx context.Context, apiKey string, httpClient *http.Client) (*genai.Client, error) {
+	cfg := &genai.ClientConfig{
+		HTTPClient: httpClient,
+		APIKey:     apiKey,
+	}
+	if baseURL := resolveBaseURLValue(); baseURL != "" {
+		cfg.HTTPOptions = genai.HTTPOptions{
+			BaseURL:    baseURL,
+			APIVersion: geminiAPIVersion,
+		}
+	}
+	return genai.NewClient(ctx, cfg)
 }
 
 func defaultSafetySettings() []*genai.SafetySetting {
@@ -917,7 +973,7 @@ func (c *responseCapture) get() []byte {
 	return append([]byte(nil), c.body...)
 }
 
-func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *genai.GenerateContentConfig, seed int32) (string, string, error) {
+func generateOnce(ctx context.Context, apiKey, model, text string, refs []string, cfg *genai.GenerateContentConfig, seed int32) (string, string, error) {
 	capture := &responseCapture{}
 	httpClient := &http.Client{Timeout: timeoutFlag}
 	httpClient.Transport = &captureTransport{
@@ -926,10 +982,7 @@ func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *
 		verbose: verboseFlag,
 		capture: capture,
 	}
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		HTTPClient: httpClient,
-		APIKey:     apiKey,
-	})
+	client, err := newGenAIClient(ctx, apiKey, httpClient)
 	if err != nil {
 		return "", "", err
 	}
@@ -940,7 +993,7 @@ func generateOnce(ctx context.Context, apiKey, text string, refs []string, cfg *
 	}
 	contents := []*genai.Content{{Parts: parts}}
 
-	resp, err := client.Models.GenerateContent(ctx, modelFlag, contents, cfg)
+	resp, err := client.Models.GenerateContent(ctx, model, contents, cfg)
 	if err != nil {
 		return "", "", err
 	}

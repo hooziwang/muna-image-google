@@ -112,12 +112,12 @@ func TestGenerateOnce_Success(t *testing.T) {
 	outFlag = t.TempDir()
 	timeoutFlag = 2 * time.Second
 	verboseFlag = false
-	t.Setenv("GOOGLE_GEMINI_BASE_URL", server.URL)
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", server.URL)
 	t.Cleanup(func() {
 		modelFlag, outFlag, timeoutFlag, verboseFlag = originalModel, originalOut, originalTimeout, originalVerbose
 	})
 
-	absPath, finishMessage, err := generateOnce(context.Background(), "test-key", "hello", nil, &genai.GenerateContentConfig{}, 7)
+	absPath, finishMessage, err := generateOnce(context.Background(), "test-key", "test-model", "hello", nil, &genai.GenerateContentConfig{}, 7)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -161,12 +161,12 @@ func TestGenerateOnce_NoImageUsesRawFinishMessage(t *testing.T) {
 	outFlag = t.TempDir()
 	timeoutFlag = 2 * time.Second
 	verboseFlag = false
-	t.Setenv("GOOGLE_GEMINI_BASE_URL", server.URL)
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", server.URL)
 	t.Cleanup(func() {
 		modelFlag, outFlag, timeoutFlag, verboseFlag = originalModel, originalOut, originalTimeout, originalVerbose
 	})
 
-	absPath, finishMessage, err := generateOnce(context.Background(), "test-key", "hello", nil, &genai.GenerateContentConfig{}, 7)
+	absPath, finishMessage, err := generateOnce(context.Background(), "test-key", "test-model", "hello", nil, &genai.GenerateContentConfig{}, 7)
 	if !errors.Is(err, errNoImage) {
 		t.Fatalf("expected errNoImage, got %v", err)
 	}

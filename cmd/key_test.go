@@ -28,6 +28,8 @@ func TestMaskKey(t *testing.T) {
 }
 
 func TestCheckKey_OK(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "")
+
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Host != "generativelanguage.googleapis.com" {
@@ -53,7 +55,34 @@ func TestCheckKey_OK(t *testing.T) {
 	}
 }
 
+func TestCheckKey_UsesConfiguredBaseURL(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "https://proxy.example.com/")
+
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.URL.String(); got != "https://proxy.example.com/v1beta/models?key=k-ok" {
+			t.Fatalf("unexpected request url: %s", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("{}")),
+			Header:     make(http.Header),
+		}, nil
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	ok, reason := checkKey(context.Background(), "k-ok", time.Second)
+	if !ok {
+		t.Fatalf("expected ok=true, got false reason=%s", reason)
+	}
+	if reason != "" {
+		t.Fatalf("expected empty reason, got %s", reason)
+	}
+}
+
 func TestCheckKey_APIErrorDetails(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "")
+
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		body := `{"error":{"code":401,"message":"bad key","status":"UNAUTHENTICATED","details":[{"reason":"API_KEY_INVALID"}]}}`
@@ -75,6 +104,8 @@ func TestCheckKey_APIErrorDetails(t *testing.T) {
 }
 
 func TestCheckKey_FallbackHTTPStatus(t *testing.T) {
+	t.Setenv("MUNA_IMAGE_GOOGLE_BASE_URL", "")
+
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{

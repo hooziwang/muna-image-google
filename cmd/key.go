@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -35,60 +36,73 @@ var keyCmd = &cobra.Command{
 	Use:   "key",
 	Short: "检查所有 API Key 是否有效",
 	Long: "检查所有 API Key 是否有效。\n" +
-		"Key 来源：优先读取环境变量 MUNA_GEMINI_API_KEY；未设置时回退 ~/.muna-image-google/.env。",
-	Run: func(_ *cobra.Command, _ []string) {
-		log.SetFlags(0)
-		keys := requireMunaGeminiAPIKeys()
-		if len(keys) == 0 {
-			log.Fatal("缺少环境变量 MUNA_GEMINI_API_KEY")
-		}
-
-		ctx := context.Background()
-		var wg sync.WaitGroup
-		type result struct {
-			key    string
-			ok     bool
-			reason string
-		}
-		results := make(chan result, len(keys))
-
-		for _, key := range keys {
-			key := key
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				ok, reason := checkKey(ctx, key, keyTimeoutFlag)
-				results <- result{key: key, ok: ok, reason: reason}
-			}()
-		}
-
-		wg.Wait()
-		close(results)
-
-		hasFail := false
-		for res := range results {
-			masked := maskKey(res.key)
-			if res.ok {
-				fmt.Printf("%s     %sOK%s\n", masked, ansiBrightGreen, ansiReset)
-				continue
-			}
-			hasFail = true
-			if strings.TrimSpace(res.reason) == "" {
-				fmt.Printf("%s     %sFAIL%s\n", masked, ansiBrightRed, ansiReset)
-				continue
-			}
-			fmt.Printf("%s     %sFAIL%s %s\n", masked, ansiBrightRed, ansiReset, res.reason)
-		}
-
-		if hasFail {
-			os.Exit(1)
+		"环境变量：MUNA_IMAGE_GOOGLE_BASE_URL、MUNA_IMAGE_GOOGLE_API_KEY。\n" +
+		"仅支持 Google 官方默认地址 https://generativelanguage.googleapis.com；当 MUNA_IMAGE_GOOGLE_BASE_URL 被设置为非官方地址时会直接退出。\n" +
+		"Key 回退来源：未设置 MUNA_IMAGE_GOOGLE_API_KEY 时，继续读取 MUNA_GEMINI_API_KEY；仍未设置时回退 ~/.muna-image-google/.env。",
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := runKeyCommand(cmd, args); err != nil {
+			log.SetFlags(0)
+			log.Fatal(err)
 		}
 	},
 }
 
+func runKeyCommand(_ *cobra.Command, _ []string) error {
+	log.SetFlags(0)
+	if err := validateOfficialBaseURLForMetaCommands(); err != nil {
+		return err
+	}
+
+	keys := requireMunaGeminiAPIKeys()
+	if len(keys) == 0 {
+		return fmt.Errorf("缺少环境变量 MUNA_IMAGE_GOOGLE_API_KEY、MUNA_GEMINI_API_KEY（或 ~/.muna-image-google/.env）")
+	}
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	type result struct {
+		key    string
+		ok     bool
+		reason string
+	}
+	results := make(chan result, len(keys))
+
+	for _, key := range keys {
+		key := key
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, reason := checkKey(ctx, key, keyTimeoutFlag)
+			results <- result{key: key, ok: ok, reason: reason}
+		}()
+	}
+
+	wg.Wait()
+	close(results)
+
+	hasFail := false
+	for res := range results {
+		masked := maskKey(res.key)
+		if res.ok {
+			fmt.Printf("%s     %sOK%s\n", masked, ansiBrightGreen, ansiReset)
+			continue
+		}
+		hasFail = true
+		if strings.TrimSpace(res.reason) == "" {
+			fmt.Printf("%s     %sFAIL%s\n", masked, ansiBrightRed, ansiReset)
+			continue
+		}
+		fmt.Printf("%s     %sFAIL%s %s\n", masked, ansiBrightRed, ansiReset, res.reason)
+	}
+
+	if hasFail {
+		os.Exit(1)
+	}
+	return nil
+}
+
 func checkKey(ctx context.Context, key string, timeout time.Duration) (bool, string) {
-	url := "https://generativelanguage.googleapis.com/v1beta/models?key=" + key
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildModelsListURL(resolveBaseURLValue(), key), nil)
 	if err != nil {
 		return false, err.Error()
 	}
@@ -133,6 +147,15 @@ func checkKey(ctx context.Context, key string, timeout time.Duration) (bool, str
 		}
 	}
 	return false, fmt.Sprintf("HTTP %d", resp.StatusCode)
+}
+
+func buildModelsListURL(baseURL, key string) string {
+	base := strings.TrimSpace(baseURL)
+	if base == "" {
+		base = defaultGeminiBaseURL
+	}
+	base = strings.TrimRight(base, "/")
+	return base + "/" + geminiAPIVersion + "/models?key=" + url.QueryEscape(key)
 }
 
 func maskKey(key string) string {
